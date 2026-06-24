@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Run Claude Code through opencode Zen models (Kimi, Qwen, DeepSeek, GLM,
+# Minimax, gpt-5.3-codex) via a local litellm proxy.
+#
+# Starts the proxy on first use if it isn't already running, then execs
+# claude in this same terminal. See ../README.md.
+set -uo pipefail
+
+# Resolve the real repo root even when this script is symlinked onto PATH.
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+REAL_SCRIPT="$(readlink "$SCRIPT_PATH" 2>/dev/null || echo "$SCRIPT_PATH")"
+case "$REAL_SCRIPT" in
+  /*) : ;;
+  *) REAL_SCRIPT="$(dirname "$SCRIPT_PATH")/$REAL_SCRIPT" ;;
+esac
+REPO_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+
+STATE_DIR="$HOME/.config/opclaude"
+ENV_FILE="$STATE_DIR/.env"
+
+if [ "${1:-}" = "models" ]; then
+  awk '
+    /^[[:space:]]*- model_name:/ {
+      if (name != "") printf "  %-24s -> %s\n", name, (target == "" ? "?" : target)
+      sub(/^[[:space:]]*- model_name:[[:space:]]*/, "")
+      name = $0
+      target = ""
+      next
+    }
+    /^[[:space:]]*model:[[:space:]]*openai\// {
+      if (target == "") {
+        t = $0
+        sub(/^[[:space:]]*model:[[:space:]]*openai\//, "", t)
+        target = t
+      }
+    }
+    END {
+      if (name != "") printf "  %-24s -> %s\n", name, (target == "" ? "?" : target)
+    }
+  ' "$REPO_DIR/config.yaml"
+  echo
+  echo "Run with: opclaude --model <name>   (default: claude-deepseek-v4-pro)"
+  exit 0
+fi
+
+if [ "${1:-}" = "set-key" ]; then
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "opclaude is not set up yet. Run install.sh first." >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+
+  new_key="${2:-}"
+  if [ -z "$new_key" ]; then
+    read -r -s -p "Enter your new opencode API key (OPENCODE_API_KEY): " new_key
+    echo
+  fi
+  if [ -z "$new_key" ]; then
+    echo "No key entered, nothing changed." >&2
+    exit 1
+  fi
+
+  umask 077
+  cat > "$ENV_FILE" <<EOF
+OPENCODE_API_KEY=$new_key
+LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY
+EOF
+  echo "Updated OPENCODE_API_KEY in $ENV_FILE."
+
+  if command -v opclaude-proxy >/dev/null 2>&1; then
+    opclaude-proxy restart
+  fi
+  exit 0
+fi
+
+CLAUDE_SETTINGS_FILE="$HOME/.claude/settings.json"
+
+if [ "${1:-}" = "enable-ide" ]; then
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "opclaude is not set up yet. Run install.sh first." >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to safely edit $CLAUDE_SETTINGS_FILE without clobbering it. Install python3 and re-run." >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+
+  mkdir -p "$(dirname "$CLAUDE_SETTINGS_FILE")"
+  OPCLAUDE_BASE_URL="http://127.0.0.1:4000" OPCLAUDE_AUTH_TOKEN="$LITELLM_MASTER_KEY" \
+    python3 - "$CLAUDE_SETTINGS_FILE" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        settings = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    settings = {}
+settings.setdefault("env", {})
+settings["env"]["ANTHROPIC_BASE_URL"] = os.environ["OPCLAUDE_BASE_URL"]
+settings["env"]["ANTHROPIC_AUTH_TOKEN"] = os.environ["OPCLAUDE_AUTH_TOKEN"]
+with open(path, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+PY
+
+  echo "Added ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN to $CLAUDE_SETTINGS_FILE."
+  echo "Every claude session now routes through opclaude -- CLI, VSCode, and JetBrains alike."
+  echo "Run 'opclaude disable-ide' to revert."
+  echo
+  opclaude-proxy ensure
+  echo "(the proxy must keep running for IDE sessions to work -- they won't auto-start it like the opclaude CLI wrapper does)"
+  exit 0
+fi
+
+if [ "${1:-}" = "disable-ide" ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to safely edit $CLAUDE_SETTINGS_FILE without clobbering it. Install python3 and re-run." >&2
+    exit 1
+  fi
+  if [ ! -f "$CLAUDE_SETTINGS_FILE" ]; then
+    echo "$CLAUDE_SETTINGS_FILE does not exist, nothing to do."
+    exit 0
+  fi
+  python3 - "$CLAUDE_SETTINGS_FILE" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    settings = json.load(f)
+env = settings.get("env", {})
+env.pop("ANTHROPIC_BASE_URL", None)
+env.pop("ANTHROPIC_AUTH_TOKEN", None)
+if env:
+    settings["env"] = env
+else:
+    settings.pop("env", None)
+with open(path, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+PY
+  echo "Removed ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN from $CLAUDE_SETTINGS_FILE."
+  echo "claude (CLI, VSCode, JetBrains) will go back to talking to Anthropic directly."
+  exit 0
+fi
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "Claude Code CLI ('claude') not found on PATH. Run install.sh again, or install it yourself:" >&2
+  echo "  npm install -g @anthropic-ai/claude-code" >&2
+  exit 1
+fi
+
+if ! command -v opclaude-proxy >/dev/null 2>&1; then
+  echo "opclaude-proxy not found on PATH. Re-run install.sh." >&2
+  exit 1
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "opclaude is not set up yet. Run install.sh first." >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+opclaude-proxy ensure || exit 1
+
+# Claude Code defaults to its own model names (e.g. claude-sonnet-4-6), which
+# don't exist on this proxy and produce a confusing 400 error. Default to the
+# cheapest/fastest opencode model unless the user passes their own --model.
+DEFAULT_MODEL="claude-deepseek-v4-pro"
+has_model_flag=0
+for arg in "$@"; do
+  case "$arg" in
+    --model|--model=*) has_model_flag=1; break ;;
+  esac
+done
+
+model_args=()
+if [ "$has_model_flag" -eq 0 ]; then
+  model_args=(--model "$DEFAULT_MODEL")
+fi
+
+exec env \
+  ANTHROPIC_BASE_URL="http://127.0.0.1:4000" \
+  ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY" \
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
+  claude "${model_args[@]+"${model_args[@]}"}" "$@"

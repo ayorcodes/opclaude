@@ -1,0 +1,165 @@
+import litellm
+from litellm.integrations.custom_logger import CustomLogger
+
+
+def _strip_thinking(messages):
+    cleaned = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            cleaned.append(msg)
+            continue
+
+        msg.pop("thinking_blocks", None)
+        msg.pop("redacted_thinking", None)
+
+        content = msg.get("content")
+        if isinstance(content, list):
+            msg["content"] = [
+                c for c in content
+                if not (isinstance(c, dict) and c.get("type") in ("thinking", "redacted_thinking"))
+            ]
+            for c in msg["content"]:
+                if isinstance(c, dict):
+                    c.pop("thinking_blocks", None)
+
+        cleaned.append(msg)
+    return cleaned
+
+
+# Alibaba/dashscope (qwen) rejects max_tokens outside [1, 65536]. Claude Code
+# can request much larger values (its defaults run into the hundreds of
+# thousands for extended-thinking-capable models), so clamp for qwen models.
+QWEN_MAX_TOKENS = 8192
+
+# Total context window (input + output tokens) for models whose upstream
+# provider enforces it strictly. Claude Code requests a fixed large
+# max_tokens (e.g. 120000) irrespective of how much input it's also sending,
+# which overflows these models' actual window once tool/text input is large.
+CONTEXT_LIMITS = {
+    "minimax-m2.5": 204800,
+    "minimax-m3": 204800,
+}
+CONTEXT_LIMIT_MARGIN = 2000
+
+# litellm.token_counter doesn't recognize these custom-routed model names, so
+# it falls back to a generic tokenizer to estimate input tokens. That
+# estimate has been observed to undercount the provider's actual count by
+# ~10-15% on requests with heavy tool/JSON content (e.g. estimated ~106k
+# against an actual 120752, letting an unclamped 96928-token max_tokens
+# request through and overflowing the real 204800 limit). Inflate the
+# estimate before computing the budget to compensate.
+INPUT_TOKEN_SAFETY_FACTOR = 1.2
+
+# Models whose backend compiles tool schemas into a constrained grammar
+# (structural_tag). With many tools active at once (Claude Code regularly
+# sends 40+, including several MCP servers), GLM-5.2's grammar compiler
+# fails to resolve $ref against $defs across the combined tool set --
+# "Cannot find field $defs in #/$defs/<Name>" -- even when each tool's
+# schema is independently flat and valid (observed with multiple Stitch
+# tools that each declare their own $defs.SelectedScreenInstance). Rather
+# than depend on however that compiler scopes/merges $defs across tools,
+# inline every $ref and drop $defs entirely so there is nothing left for
+# it to resolve.
+INLINE_REFS_MODEL_SUBSTRINGS = ("glm",)
+
+
+def _inline_refs(schema):
+    if not isinstance(schema, dict):
+        return schema
+
+    defs = schema.get("$defs")
+    if not isinstance(defs, dict):
+        return schema
+
+    def resolve(node, stack):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                name = ref.rsplit("/", 1)[-1]
+                target = defs.get(name)
+                if target is not None and name not in stack:
+                    inlined = resolve(target, stack | {name})
+                    if isinstance(inlined, dict):
+                        merged = dict(inlined)
+                        merged.update({k: v for k, v in node.items() if k != "$ref"})
+                        return merged
+                return node
+            return {
+                key: resolve(value, stack)
+                for key, value in node.items()
+                if key != "$defs"
+            }
+        if isinstance(node, list):
+            return [resolve(item, stack) for item in node]
+        return node
+
+    resolved = resolve(schema, frozenset())
+    schema.clear()
+    schema.update(resolved)
+    return schema
+
+
+def _inline_tool_schemas(tools):
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+
+        # Anthropic Messages format (what reaches this proxy's pre-call
+        # hook, since the Anthropic->OpenAI tool translation happens later
+        # inside litellm's own handler code).
+        input_schema = tool.get("input_schema")
+        if isinstance(input_schema, dict):
+            _inline_refs(input_schema)
+
+        # OpenAI chat-completions format, in case this hook ever runs after
+        # translation or against a request built directly in that shape.
+        function = tool.get("function")
+        if isinstance(function, dict):
+            parameters = function.get("parameters")
+            if isinstance(parameters, dict):
+                _inline_refs(parameters)
+
+
+class ClampClaudeCodeRequest(CustomLogger):
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
+        messages = data.get("messages")
+        if messages:
+            data["messages"] = _strip_thinking(messages)
+
+        model = data.get("model") or ""
+        model_lower = model.lower()
+
+        if any(s in model_lower for s in INLINE_REFS_MODEL_SUBSTRINGS):
+            tools = data.get("tools")
+            if isinstance(tools, list):
+                _inline_tool_schemas(tools)
+
+        if "qwen" in model_lower:
+            max_tokens = data.get("max_tokens")
+            if not isinstance(max_tokens, int) or max_tokens < 1 or max_tokens > 65536:
+                data["max_tokens"] = QWEN_MAX_TOKENS
+
+        for key, context_limit in CONTEXT_LIMITS.items():
+            if key in model_lower:
+                max_tokens = data.get("max_tokens")
+                if isinstance(max_tokens, int) and messages:
+                    try:
+                        input_tokens = litellm.token_counter(
+                            model=model,
+                            messages=messages,
+                            tools=data.get("tools"),
+                        )
+                    except Exception:
+                        input_tokens = 0
+                    input_tokens = int(input_tokens * INPUT_TOKEN_SAFETY_FACTOR)
+                    budget = context_limit - input_tokens - CONTEXT_LIMIT_MARGIN
+                    if budget < 1:
+                        budget = 1
+                    if max_tokens > budget:
+                        data["max_tokens"] = budget
+                break
+
+        return data
+
+
+proxy_handler_instance = ClampClaudeCodeRequest()

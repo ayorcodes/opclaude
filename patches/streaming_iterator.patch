@@ -1,0 +1,32 @@
+--- a/litellm/llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py	2026-06-24 14:10:59
++++ b/litellm/llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py	2026-06-24 14:10:59
+@@ -343,7 +343,7 @@
+                     self.holding_stop_reason_chunk is not None
+                     and getattr(chunk, "usage", None) is not None
+                 )
+-                is_final_chunk = chunk.choices[0].finish_reason is not None
++                is_final_chunk = bool(chunk.choices) and chunk.choices[0].finish_reason is not None
+                 processed_chunk = LiteLLMAnthropicMessagesAdapter().translate_streaming_openai_response_to_anthropic(
+                     response=chunk,
+                     current_content_block_index=self.current_content_block_index,
+@@ -591,7 +591,7 @@
+                     self.holding_stop_reason_chunk is not None
+                     and getattr(chunk, "usage", None) is not None
+                 )
+-                is_final_chunk = chunk.choices[0].finish_reason is not None
++                is_final_chunk = bool(chunk.choices) and chunk.choices[0].finish_reason is not None
+                 processed_chunk = LiteLLMAnthropicMessagesAdapter().translate_streaming_openai_response_to_anthropic(
+                     response=chunk,
+                     current_content_block_index=self.current_content_block_index,
+@@ -814,6 +814,11 @@
+         """
+         from .transformation import LiteLLMAnthropicMessagesAdapter
+ 
++        # Usage-only trailer chunks (stream_options.include_usage) carry an
++        # empty choices list - nothing to start a new block for.
++        if not chunk.choices:
++            return False
++
+         # Example logic - customize based on your needs:
+         # If chunk indicates a tool call
+         if chunk.choices[0].finish_reason is not None:

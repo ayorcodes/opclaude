@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>opclaude — claude code, routed through opencode</title>
+<meta name="description" content="Use the Claude Code CLI you already know, routed through an opencode Go subscription instead of Anthropic's API. One subscription, six models, no separate API bills." />
+<link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div class="scanlines" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <a class="brand" href="#top">
+    <span class="brand__mark">opclaude</span><span class="cursor">_</span>
+  </a>
+  <nav class="topnav">
+    <a href="#how">how it works</a>
+    <a href="#models">models</a>
+    <a href="#install">install</a>
+    <a href="https://github.com/ayorcodes/opclaude" class="topnav__gh" rel="noopener">github &#8599;</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <p class="hero__kicker">// a local proxy that sits in front of claude code</p>
+    <h1 class="hero__title">
+      one <span class="accent">opencode Go</span> subscription. every model.
+    </h1>
+    <p class="hero__sub">
+      Keep the Claude Code CLI you already know. opclaude points it at your
+      <strong>opencode Go subscription</strong> instead of Anthropic's API —
+      Kimi, Qwen, DeepSeek, GLM, and Minimax, all under one flat bill instead
+      of separate per-model invoices.
+    </p>
+    <p class="requirement-note">
+      <span class="requirement-note__mark">!</span>
+      requires an opencode <strong>Go</strong> subscription + API key —
+      <a href="https://opencode.ai" rel="noopener">get one at opencode.ai &#8599;</a>
+    </p>
+  </section>
+
+  <section class="pipeline-section" id="demo" aria-label="live request routing demo">
+    <div class="pipeline-header">
+      <span class="pipeline-header__dot"></span>
+      <span>live routing — every request takes this exact path</span>
+    </div>
+
+    <div class="pipeline" id="pipeline">
+
+      <svg class="wires" viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true">
+        <path id="wire-in" class="wire" d="M 168 300 C 260 300, 280 300, 372 300" />
+        <path id="wire-0" class="wire" d="M 478 300 C 600 300, 620 60,  742 60"   data-target="0" />
+        <path id="wire-1" class="wire" d="M 478 300 C 600 300, 620 180, 742 180" data-target="1" />
+        <path id="wire-2" class="wire" d="M 478 300 C 600 300, 620 300, 742 300" data-target="2" />
+        <path id="wire-3" class="wire" d="M 478 300 C 600 300, 620 420, 742 420" data-target="3" />
+        <path id="wire-4" class="wire" d="M 478 300 C 600 300, 620 540, 742 540" data-target="4" />
+      </svg>
+
+      <div class="packet" id="packet" aria-hidden="true"></div>
+
+      <div class="node node--source" id="node-source" style="left:6%; top:50%;">
+        <div class="node__chrome">
+          <span class="node__dot node__dot--red"></span>
+          <span class="node__dot node__dot--yellow"></span>
+          <span class="node__dot node__dot--green"></span>
+        </div>
+        <div class="node__label">claude code</div>
+        <div class="node__body">
+          <span class="node__prompt">$</span>
+          <span class="node__typed" id="typed-prompt"></span><span class="node__caret">&#9608;</span>
+        </div>
+      </div>
+
+      <div class="node node--proxy" id="node-proxy" style="left:43%; top:50%;">
+        <div class="node__label node__label--proxy">opclaude proxy</div>
+        <div class="node__body node__body--log" id="proxy-log">
+          <div class="log-line" id="log-line">awaiting request&hellip;</div>
+        </div>
+        <div class="node__sub">127.0.0.1 only</div>
+      </div>
+
+      <div class="targets" id="targets">
+        <button class="target" id="target-0" data-model="kimi"     style="top:10%;"  data-i="0">
+          <span class="target__dot"></span><span class="target__name">kimi&#8209;2.7</span>
+        </button>
+        <button class="target" id="target-1" data-model="qwen"     style="top:30%;"  data-i="1">
+          <span class="target__dot"></span><span class="target__name">qwen&#8209;3.5&#8209;plus</span>
+        </button>
+        <button class="target" id="target-2" data-model="deepseek" style="top:50%;"  data-i="2">
+          <span class="target__dot"></span><span class="target__name">deepseek&#8209;v4&#8209;pro</span>
+        </button>
+        <button class="target" id="target-3" data-model="glm"      style="top:70%;"  data-i="3">
+          <span class="target__dot"></span><span class="target__name">glm&#8209;5.2</span>
+        </button>
+        <button class="target" id="target-4" data-model="minimax"  style="top:90%;"  data-i="4">
+          <span class="target__dot"></span><span class="target__name">minimax&#8209;m3</span>
+        </button>
+      </div>
+
+    </div>
+
+    <p class="pipeline-caption">
+      click a model to route there now, or let it cycle —
+      <span id="cycle-state">auto-cycling</span>
+    </p>
+  </section>
+
+  <section class="what" id="what">
+    <p>
+      <span class="what__line">opclaude is a small <a href="https://github.com/BerriAI/litellm" rel="noopener">litellm</a> proxy plus a one-command installer.</span>
+      <span class="what__line">It speaks Anthropic's API on one side, opencode Zen models on the other — Claude Code never knows the difference.</span>
+    </p>
+  </section>
+
+  <section class="how" id="how">
+    <h2 class="section-title">// how it works</h2>
+    <p class="how__text">
+      opclaude runs a small proxy on <code>127.0.0.1</code> that speaks
+      Anthropic's API to Claude Code on one side, and your opencode Go
+      subscription on the other. Claude Code talks to it exactly like it
+      talks to Anthropic — same CLI, same flags — while opclaude smooths over
+      each model's quirks behind the scenes. Your opencode key never leaves
+      your machine.
+    </p>
+  </section>
+
+  <section class="models" id="models">
+    <h2 class="section-title">// available models</h2>
+    <pre class="model-table" aria-label="model list"><code><span class="mt-head">NAME              PROVIDER     NOTES</span>
+<span class="mt-row" data-model="kimi">kimi-2.7          moonshot ai  long-context, fast</span>
+<span class="mt-row" data-model="qwen">qwen-3.5-plus     alibaba      max_tokens clamped to 8192</span>
+<span class="mt-row" data-model="deepseek">deepseek-v4-pro   deepseek     default model, no flag needed</span>
+<span class="mt-row" data-model="glm">glm-5.2           zhipu ai     thinking_blocks stripped</span>
+<span class="mt-row" data-model="minimax">minimax-m3        minimax      204800-token context, auto-clamped</span></code></pre>
+    <p class="models-note">run <code>opclaude models</code> any time for the live list.</p>
+  </section>
+
+  <section class="install" id="install">
+    <h2 class="section-title">// install</h2>
+    <div class="term-window">
+      <div class="term-window__chrome">
+        <span class="node__dot node__dot--red"></span>
+        <span class="node__dot node__dot--yellow"></span>
+        <span class="node__dot node__dot--green"></span>
+        <span class="term-window__title">zsh</span>
+        <button class="copy-btn" id="copy-btn" type="button">copy</button>
+      </div>
+      <pre class="term-window__body" id="install-snippet"><code>curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash</code></pre>
+    </div>
+    <p class="install-note">
+      macOS, needs an opencode <strong>Go</strong> subscription + API key. Pulls the repo into <code>~/.opclaude-src</code> and runs the real installer — read it before piping to bash if that's your thing. MIT licensed.
+    </p>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>opclaude — routes, doesn't replace.</span>
+  <a href="https://github.com/ayorcodes/opclaude" rel="noopener">source &#8599;</a>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

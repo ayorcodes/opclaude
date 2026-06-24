@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Manages the local litellm proxy that routes Claude Code through opencode
+# Zen models. See ../README.md and ../FIX.md.
+#
+# Usage: opclaude-proxy start|stop|restart|status|ensure
+set -uo pipefail
+
+# Resolve the real repo root even when this script is symlinked onto PATH.
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+REAL_SCRIPT="$(readlink "$SCRIPT_PATH" 2>/dev/null || echo "$SCRIPT_PATH")"
+case "$REAL_SCRIPT" in
+  /*) : ;;
+  *) REAL_SCRIPT="$(dirname "$SCRIPT_PATH")/$REAL_SCRIPT" ;;
+esac
+REPO_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+
+STATE_DIR="$HOME/.config/opclaude"
+ENV_FILE="$STATE_DIR/.env"
+PID_FILE="$STATE_DIR/proxy.pid"
+LOG_FILE="$STATE_DIR/proxy.log"
+PORT=4000
+HOST=127.0.0.1
+
+mkdir -p "$STATE_DIR"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "opclaude is not set up yet. Run install.sh from $REPO_DIR first." >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+is_running() {
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      if curl -fsS -o /dev/null --max-time 2 "http://$HOST:$PORT/health/liveliness" 2>/dev/null; then
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+start() {
+  if is_running; then
+    echo "opclaude proxy already running (pid $(cat "$PID_FILE"))."
+    return 0
+  fi
+  rm -f "$PID_FILE"
+  echo "Starting opclaude proxy on http://$HOST:$PORT ..."
+  (
+    cd "$REPO_DIR" || exit 1
+    nohup litellm --config config.yaml --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+  )
+
+  local waited=0
+  while [ "$waited" -lt 30 ]; do
+    if curl -fsS -o /dev/null --max-time 2 "http://$HOST:$PORT/health/liveliness" 2>/dev/null; then
+      echo "opclaude proxy is up (pid $(cat "$PID_FILE"))."
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  echo "opclaude proxy did not come up within 30s. Last 30 lines of $LOG_FILE:" >&2
+  tail -n 30 "$LOG_FILE" >&2
+  return 1
+}
+
+stop() {
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid"
+      echo "Stopped opclaude proxy (pid $pid)."
+    fi
+    rm -f "$PID_FILE"
+  else
+    echo "opclaude proxy is not running."
+  fi
+}
+
+status() {
+  if is_running; then
+    echo "opclaude proxy is running (pid $(cat "$PID_FILE")) on http://$HOST:$PORT"
+  else
+    echo "opclaude proxy is not running."
+  fi
+}
+
+case "${1:-}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; sleep 1; start ;;
+  status) status ;;
+  ensure) is_running || start ;;
+  *)
+    echo "Usage: opclaude-proxy start|stop|restart|status|ensure" >&2
+    exit 1
+    ;;
+esac
