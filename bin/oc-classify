@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Classify a coding task as trivial/moderate/critical for `oc`.
+
+Heuristics first (free); falls back to a single cheap LLM call through the
+*existing* opclaude proxy only when heuristics are ambiguous. Never calls
+`claude` itself, so classification can never spend real Anthropic usage.
+
+Shares its heuristics with the per-turn router in litellm_hooks.py via the
+repo-root oc_router module.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+# Import the shared classifier module from the repo root, resolving through
+# the symlink this script is usually invoked as (~/.local/bin/oc-classify).
+_REPO_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if _REPO_DIR not in sys.path:
+    sys.path.insert(0, _REPO_DIR)
+import oc_router  # noqa: E402
+
+# Within "critical", the subset that warrants the strongest real model (Opus)
+# rather than the default critical model (Sonnet) -- the hardest, most
+# open-ended, highest-blast-radius end of the critical bucket.
+OPUS_RE = re.compile(
+    r"complex distributed system|novel algorithm|formal (proof|verification)|"
+    r"security audit|cryptograph|compiler|from[- ]scratch (design|architecture)|"
+    r"large[- ]scale migration|whole[- ](system|codebase) (refactor|redesign)|"
+    r"multi[- ]service architecture|research",
+    re.IGNORECASE,
+)
+
+
+def git_signal_nudge(tier):
+    """Best-effort: a large pending diff nudges an ambiguous task up a tier."""
+    try:
+        out = subprocess.run(
+            ["git", "diff", "--stat", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if out.returncode != 0:
+            return tier
+        lines = [l for l in out.stdout.splitlines() if l.strip()]
+        if len(lines) > 10:
+            return "critical" if tier == "moderate" else "moderate"
+    except Exception:
+        pass
+    return tier
+
+
+def read_env_file(state_dir):
+    env_path = os.path.join(state_dir, ".env")
+    values = {}
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                values[k] = v
+    except FileNotFoundError:
+        pass
+    return values
+
+
+def llm_classify(task, model, state_dir):
+    env = read_env_file(state_dir)
+    master_key = env.get("LITELLM_MASTER_KEY")
+    if not master_key:
+        return None
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Respond with exactly one word: TRIVIAL, MODERATE, or CRITICAL. No explanation.",
+            },
+            {
+                "role": "user",
+                "content": f'Classify this coding task by complexity/risk: "{task}"',
+            },
+        ],
+        "max_tokens": 150,
+    }
+    req = urllib.request.Request(
+        "http://127.0.0.1:4000/v1/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {master_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            body = json.loads(resp.read().decode())
+        text = body["choices"][0]["message"]["content"].strip().upper()
+        for candidate in ("TRIVIAL", "MODERATE", "CRITICAL"):
+            if candidate in text:
+                return candidate.lower()
+    except (urllib.error.URLError, KeyError, IndexError, ValueError, TimeoutError):
+        return None
+    return None
+
+
+def critical_effort(task):
+    return "opus" if OPUS_RE.search(task) else "sonnet"
+
+
+def model_for_critical(effort, router_config):
+    critical_cfg = router_config.get("critical", {})
+    if effort == "opus":
+        return critical_cfg.get("high_effort", "opus")
+    return critical_cfg.get("default", "sonnet")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", required=True)
+    parser.add_argument("--router-config", default=None)
+    parser.add_argument("--state-dir", default=os.path.expanduser("~/.config/opclaude"))
+    args = parser.parse_args()
+
+    task = args.task
+    router_config = oc_router.load_router_config(args.router_config)
+    task_type = oc_router.detect_task_type(task)
+
+    tier, reason = oc_router.heuristic_tier(task)
+    method = "heuristic"
+
+    if tier is None:
+        tier = git_signal_nudge(router_config.get("classifier", {}).get(
+            "ambiguous_default", "moderate"
+        ))
+        classifier_model = router_config.get("classifier", {}).get(
+            "model", "claude-kimi-2.7"
+        )
+        llm_tier = llm_classify(task, classifier_model, args.state_dir)
+        if llm_tier:
+            tier = llm_tier
+            method = "llm"
+            reason = f"ambiguous heuristics, classified by {classifier_model}"
+        else:
+            method = "default"
+            reason = "ambiguous heuristics, classifier unavailable, defaulted"
+
+    result = {
+        "tier": tier,
+        "task_type": task_type,
+        "method": method,
+        "reason": reason,
+        "task_hash": "sha256:" + hashlib.sha256(task.encode()).hexdigest(),
+        "task_text": task,
+    }
+
+    if tier == "critical":
+        effort = critical_effort(task)
+        result["effort"] = effort
+        result["model"] = model_for_critical(effort, router_config)
+    else:
+        result["model"] = oc_router.pick_cheap_model(tier, task_type, router_config)
+
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()

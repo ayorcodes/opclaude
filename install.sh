@@ -24,12 +24,15 @@ mkdir -p "$STATE_DIR" "$BIN_DIR"
 if ! command -v uv >/dev/null 2>&1; then
   echo
   echo "uv (the Python tool installer litellm runs under) is not installed."
-  read -r -p "Install it now via the official installer script? [y/N] " reply
-  if [[ "$reply" =~ ^[Yy]$ ]]; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-  else
+  read -r -p "Install it now via the official installer script? [Y/n] " reply
+  if [[ "$reply" =~ ^[Nn]$ ]]; then
     echo "Install uv yourself (https://docs.astral.sh/uv/) and re-run this script." >&2
+    exit 1
+  fi
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv installed but not found on PATH. You may need to open a new terminal and re-run this script." >&2
     exit 1
   fi
 fi
@@ -39,15 +42,19 @@ if ! command -v claude >/dev/null 2>&1; then
   echo
   echo "Claude Code CLI ('claude') is not on PATH."
   if command -v npm >/dev/null 2>&1; then
-    read -r -p "Install it now via 'npm install -g @anthropic-ai/claude-code'? [y/N] " reply
-    if [[ "$reply" =~ ^[Yy]$ ]]; then
-      npm install -g @anthropic-ai/claude-code
-    else
+    read -r -p "Install it now via 'npm install -g @anthropic-ai/claude-code'? [Y/n] " reply
+    if [[ "$reply" =~ ^[Nn]$ ]]; then
       echo "Install Claude Code yourself and re-run this script." >&2
       exit 1
     fi
+    npm install -g @anthropic-ai/claude-code
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "claude was installed but is not on PATH yet. You may need to open a new terminal and re-run this script." >&2
+      exit 1
+    fi
   else
-    echo "npm not found. Install Node.js, then Claude Code (npm install -g @anthropic-ai/claude-code), then re-run this script." >&2
+    echo "npm not found. Install Node.js (https://nodejs.org), then re-run this script." >&2
+    echo "  brew install node   # if you have Homebrew" >&2
     exit 1
   fi
 fi
@@ -88,7 +95,16 @@ echo "Saved secrets to $ENV_FILE (mode 600)."
 # --- bin scripts on PATH ---------------------------------------------------
 ln -sf "$REPO_DIR/bin/opclaude" "$BIN_DIR/opclaude"
 ln -sf "$REPO_DIR/bin/opclaude-proxy" "$BIN_DIR/opclaude-proxy"
-echo "Linked opclaude and opclaude-proxy into $BIN_DIR"
+ln -sf "$REPO_DIR/bin/oc" "$BIN_DIR/oc"
+ln -sf "$REPO_DIR/bin/oc-classify" "$BIN_DIR/oc-classify"
+echo "Linked opclaude, opclaude-proxy, and oc into $BIN_DIR"
+
+# --- router config (for `oc`) ----------------------------------------------
+ROUTER_CONFIG="$STATE_DIR/router.yaml"
+if [ ! -f "$ROUTER_CONFIG" ]; then
+  cp "$REPO_DIR/router.yaml.example" "$ROUTER_CONFIG"
+  echo "Seeded $ROUTER_CONFIG from router.yaml.example."
+fi
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) : ;;

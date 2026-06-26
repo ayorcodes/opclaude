@@ -1,0 +1,28 @@
+# oc router config. Copied to ~/.config/opclaude/router.yaml on install;
+# re-running install.sh never overwrites an existing copy, so tune freely.
+models:
+  trivial:
+    default: claude-deepseek-v4-flash
+    rename: claude-kimi-2.7
+    typo: claude-kimi-2.7
+    format: claude-kimi-2.7
+  moderate:
+    default: claude-deepseek-v4-pro
+    test: claude-qwen-3.7-plus
+    refactor: claude-deepseek-v4-pro
+    implement: claude-kimi-2.7
+  # A turn that looks "critical" inside an auto-routed cheap session can't
+  # reach real Claude (the proxy has no Pro access), so it gets the strongest
+  # cheap model instead. Use `oc --escalate` to take it to real Claude.
+  critical_cheap:
+    default: claude-deepseek-v4-pro
+classifier:
+  model: claude-kimi-2.7
+  ambiguous_default: moderate
+critical:
+  default: sonnet       # most tasks needing real Claude reasoning
+  high_effort: opus     # the hardest, most open-ended, highest-stakes subset
+per_turn:
+  enabled: true         # re-classify and re-route every turn within a session
+logging:
+  full_text: false

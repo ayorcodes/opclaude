@@ -1,5 +1,46 @@
+import os
+
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
+
+import oc_router
+
+# `oc` launches auto-routed cheap sessions with this sentinel model name.
+# When the proxy sees it, the per-turn router below rewrites it to the right
+# opencode-Zen model for that specific turn. Any other model name (e.g. a
+# plain `opclaude --model claude-kimi-2.7` session) is left untouched, so
+# opclaude's explicit-model behavior is unaffected.
+AUTO_MODEL_SENTINEL = "claude-auto"
+
+_ROUTER_CONFIG_CACHE = {"mtime": None, "config": None}
+
+
+def _router_config():
+    """Load router.yaml, re-reading only when the file changes."""
+    path = os.path.expanduser("~/.config/opclaude/router.yaml")
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+    if _ROUTER_CONFIG_CACHE["mtime"] != mtime:
+        _ROUTER_CONFIG_CACHE["config"] = oc_router.load_router_config(path)
+        _ROUTER_CONFIG_CACHE["mtime"] = mtime
+    return _ROUTER_CONFIG_CACHE["config"]
+
+
+def _route_turn(messages):
+    """Pick the cheap model for the latest user turn (heuristics only)."""
+    config = _router_config()
+    if not config.get("per_turn", {}).get("enabled", True):
+        return config.get("models", {}).get("moderate", {}).get(
+            "default", "claude-deepseek-v4-pro"
+        )
+    task = oc_router.last_user_text(messages)
+    tier, _ = oc_router.heuristic_tier(task)
+    if tier is None:
+        tier = "moderate"  # ambiguous -> safe middle (no per-turn LLM call)
+    task_type = oc_router.detect_task_type(task)
+    return oc_router.pick_cheap_model(tier, task_type, config)
 
 
 def _strip_thinking(messages):
@@ -126,7 +167,14 @@ class ClampClaudeCodeRequest(CustomLogger):
         if messages:
             data["messages"] = _strip_thinking(messages)
 
+        # Per-turn auto-routing: resolve the sentinel to a real cheap model
+        # based on this turn's content, before the model-specific clamps below
+        # (which key off the resolved model name).
         model = data.get("model") or ""
+        if model.lower() == AUTO_MODEL_SENTINEL:
+            model = _route_turn(data.get("messages"))
+            data["model"] = model
+
         model_lower = model.lower()
 
         if any(s in model_lower for s in INLINE_REFS_MODEL_SUBSTRINGS):

@@ -22,4 +22,7 @@ else
   git clone "$REPO_URL" "$SRC_DIR"
 fi
 
-exec "$SRC_DIR/install.sh"
+# Redirect stdin from the terminal so install.sh's interactive prompts work
+# even when this script was piped in via `curl ... | bash` (where stdin is the
+# curl pipe, not the user's terminal).
+exec "$SRC_DIR/install.sh" </dev/tty

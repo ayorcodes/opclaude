@@ -105,6 +105,17 @@ model_list:
       use_chat_completions_api: true
       drop_params: true
 
+  # Sentinel for `oc`'s per-turn auto-routing. litellm_hooks.py rewrites the
+  # model per request before it's sent upstream, so these params are only a
+  # placeholder the proxy needs to accept the request initially.
+  - model_name: claude-auto
+    litellm_params:
+      model: openai/deepseek-v4-pro
+      api_base: https://opencode.ai/zen/go/v1
+      api_key: os.environ/OPENCODE_API_KEY
+      use_chat_completions_api: true
+      drop_params: true
+
 litellm_settings:
   drop_params: true
   use_chat_completions_url_for_anthropic_messages: true

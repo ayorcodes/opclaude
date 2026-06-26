@@ -51,6 +51,25 @@ opclaude-proxy restart
 
 The proxy stays running between sessions — the next `opclaude` invocation is instant. It binds to `127.0.0.1` only and is never exposed beyond your machine.
 
+## `oc` — auto-route by task
+
+`oc` decides per-task whether you need real Claude or a cheap opencode-Zen model will do, so you don't have to remember to switch yourself. It's opt-in and separate from `opclaude` — plain `claude`/`opclaude` are unaffected.
+
+```bash
+oc "rename this variable to camelCase"      # trivial/moderate -> cheap model via the proxy
+oc "design a distributed rate limiter"      # critical reasoning -> real Claude (Sonnet, full Pro)
+oc "do a full security audit"               # hardest critical subset -> real Claude (Opus)
+oc classify "fix this typo"                 # see the routing decision without launching anything
+oc --escalate                               # take the last cheap session up to real Claude (Pro)
+oc --cheap                                  # continue the most recent session down on the cheap proxy
+```
+
+The first decision — cheap vs. real Claude (and Sonnet vs. Opus within critical) — is heuristic first (keyword match, free), falling back to a single cheap-model call through the existing proxy only when ambiguous; it never spends real Claude usage to make the routing decision itself.
+
+Once a cheap session is running, **every turn is auto-routed**: a per-turn classifier in the proxy hook picks the right cheap model for each message (plan/implement/rename/test all land on different models) without you switching anything. Crossing into real Claude mid-conversation isn't possible in one process, so use `oc --escalate` (cheap → Pro) or `oc --cheap` (Pro → cheap) — both carry full context across via session resume.
+
+Tune the model-per-task mappings, the Sonnet/Opus split, and toggle per-turn routing in `~/.config/opclaude/router.yaml`. Every decision is logged to `~/.config/opclaude/router.log` (JSONL) as a base for future routing improvements.
+
 ## Models
 
 | name | provider | notes |

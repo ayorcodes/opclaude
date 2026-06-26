@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# oc: routes a Claude Code task to a cheap opencode-Zen model (via the
+# existing opclaude proxy) when the task is trivial/moderate, or to real
+# Claude (full Pro/OAuth, no proxy at all) when it needs critical reasoning.
+# Does not change opclaude's own default behavior -- plain `claude` and
+# `opclaude` keep working exactly as before. See ../README.md.
+#
+# Usage:
+#   oc "<task description>"     classify, route, launch an auto-routed session
+#   oc classify "<task>"        print the classification decision only
+#   oc --escalate [extra text]  resume the last oc session on real Claude (Pro)
+#   oc --cheap [extra text]     continue the most recent session on the cheap proxy
+set -uo pipefail
+
+# Resolve the real repo root even when this script is symlinked onto PATH.
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+REAL_SCRIPT="$(readlink "$SCRIPT_PATH" 2>/dev/null || echo "$SCRIPT_PATH")"
+case "$REAL_SCRIPT" in
+  /*) : ;;
+  *) REAL_SCRIPT="$(dirname "$SCRIPT_PATH")/$REAL_SCRIPT" ;;
+esac
+REPO_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
+
+STATE_DIR="$HOME/.config/opclaude"
+ENV_FILE="$STATE_DIR/.env"
+ROUTER_CONFIG="$STATE_DIR/router.yaml"
+LOG_FILE="$STATE_DIR/router.log"
+LAST_SESSION_FILE="$STATE_DIR/last_session"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "opclaude is not set up yet. Run install.sh first." >&2
+  exit 1
+fi
+
+log_decision() {
+  # $1 = classify JSON, $2 = path (cheap|critical), $3 = session_id (or "")
+  python3 - "$1" "$2" "$3" "$ROUTER_CONFIG" "$LOG_FILE" <<'PY'
+import datetime
+import json
+import sys
+
+decision_json, path, session_id, router_config, log_file = sys.argv[1:6]
+decision = json.loads(decision_json)
+
+full_text = False
+try:
+    with open(router_config) as f:
+        for line in f:
+            if "full_text" in line:
+                full_text = "true" in line.lower()
+except FileNotFoundError:
+    pass
+
+entry = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "task_hash": decision.get("task_hash"),
+    "tier": decision.get("tier"),
+    "task_type": decision.get("task_type"),
+    "method": decision.get("method"),
+    "model": decision.get("model"),
+    "path": path,
+    "session_id": session_id or None,
+}
+if full_text:
+    entry["task_text"] = decision.get("task_text")
+else:
+    entry["task_excerpt"] = (decision.get("task_text") or "")[:80]
+
+with open(log_file, "a") as f:
+    f.write(json.dumps(entry) + "\n")
+PY
+}
+
+log_escalation() {
+  # $1 = session_id
+  python3 - "$1" "$LOG_FILE" <<'PY'
+import datetime
+import json
+import sys
+
+session_id, log_file = sys.argv[1:3]
+entry = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "event": "escalation",
+    "session_id": session_id,
+}
+with open(log_file, "a") as f:
+    f.write(json.dumps(entry) + "\n")
+PY
+}
+
+case "${1:-}" in
+  classify)
+    shift
+    TASK="$*"
+    if [ -z "$TASK" ]; then
+      echo "Usage: oc classify \"<task description>\"" >&2
+      exit 1
+    fi
+    exec "$REPO_DIR/bin/oc-classify" --task "$TASK" --router-config "$ROUTER_CONFIG"
+    ;;
+
+  --escalate)
+    shift
+    EXTRA="$*"
+    if [ ! -f "$LAST_SESSION_FILE" ]; then
+      echo "No previous oc session found ($LAST_SESSION_FILE missing). Run 'oc \"<task>\"' first." >&2
+      exit 1
+    fi
+    # shellcheck disable=SC1090
+    source "$LAST_SESSION_FILE"
+    if [ "${CWD:-}" != "$(pwd)" ]; then
+      echo "Warning: last oc session was started in $CWD, not $(pwd))." >&2
+      echo "Claude Code transcripts are project-path-scoped -- resume may not find it." >&2
+    fi
+    log_escalation "$SESSION_ID"
+    echo "oc: escalating session $SESSION_ID to real Claude (Pro, no proxy)." >&2
+    if [ -n "$EXTRA" ]; then
+      exec claude --resume "$SESSION_ID" --fork-session "$EXTRA"
+    else
+      exec claude --resume "$SESSION_ID" --fork-session
+    fi
+    ;;
+
+  --cheap|--downgrade)
+    # Continue the most recent conversation in this directory, but on the
+    # cheap proxy instead of real Claude -- e.g. you planned on opus, now
+    # implement on a cheap model with the plan carried over. Uses --continue
+    # so it works regardless of how the prior session was started.
+    shift
+    EXTRA="$*"
+    if ! command -v opclaude-proxy >/dev/null 2>&1; then
+      echo "opclaude-proxy not found on PATH. Re-run install.sh." >&2
+      exit 1
+    fi
+    opclaude-proxy ensure || exit 1
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+    python3 - "$LOG_FILE" <<'PY'
+import datetime, json, sys
+with open(sys.argv[1], "a") as f:
+    f.write(json.dumps({
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "event": "downgrade",
+        "path": "cheap",
+    }) + "\n")
+PY
+    echo "oc: continuing most recent session on the cheap proxy (auto-routed)." >&2
+    exec env \
+      ANTHROPIC_BASE_URL="http://127.0.0.1:4000" \
+      ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY" \
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
+      claude --continue --fork-session --model claude-auto ${EXTRA:+"$EXTRA"}
+    ;;
+esac
+
+TASK="$*"
+if [ -z "$TASK" ]; then
+  echo "Usage: oc \"<task description>\"" >&2
+  echo "       oc classify \"<task description>\"" >&2
+  echo "       oc --escalate [extra context]" >&2
+  echo "       oc --cheap [extra context]" >&2
+  exit 1
+fi
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "Claude Code CLI ('claude') not found on PATH." >&2
+  exit 1
+fi
+
+DECISION="$("$REPO_DIR/bin/oc-classify" --task "$TASK" --router-config "$ROUTER_CONFIG")"
+read -r TIER MODEL <<EOF
+$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+print(d['tier'], d.get('model') or '-')
+" "$DECISION")
+EOF
+
+if [ "$TIER" = "critical" ]; then
+  log_decision "$DECISION" "critical" ""
+  echo "oc: routing to real Claude --model $MODEL (critical reasoning task)." >&2
+  exec claude --model "$MODEL" "$@"
+fi
+
+if ! command -v opclaude-proxy >/dev/null 2>&1; then
+  echo "opclaude-proxy not found on PATH. Re-run install.sh." >&2
+  exit 1
+fi
+opclaude-proxy ensure || exit 1
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+if ! command -v uuidgen >/dev/null 2>&1; then
+  echo "uuidgen not found on PATH (expected on macOS by default)." >&2
+  exit 1
+fi
+SESSION_ID="$(uuidgen)"
+
+TASK_Q="$(printf '%q' "$TASK")"
+cat > "$LAST_SESSION_FILE" <<EOF
+SESSION_ID=$SESSION_ID
+TASK=$TASK_Q
+MODEL=$MODEL
+TIER=$TIER
+CWD=$(pwd)
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+
+log_decision "$DECISION" "cheap" "$SESSION_ID"
+echo "oc: auto-routing this session via opclaude proxy (first turn: $TIER -> $MODEL)." >&2
+
+# Launch with the auto-routing sentinel so litellm_hooks.py picks the right
+# cheap model per turn for the rest of the conversation, not just the first.
+exec env \
+  ANTHROPIC_BASE_URL="http://127.0.0.1:4000" \
+  ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY" \
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
+  claude --model claude-auto --session-id "$SESSION_ID" "$@"
