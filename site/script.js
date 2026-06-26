@@ -177,10 +177,54 @@
     });
   });
 
+  // --- OS tab switcher ---------------------------------------------------
+
+  const INSTALL = {
+    mac: {
+      title: "zsh",
+      code: "curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash",
+      note: `Pulls the repo into <code>~/.opclaude-src</code> and runs the installer — prompts to install <code>uv</code> and Claude Code if missing, then asks for your opencode API key. Needs an opencode <strong>Go</strong> subscription. MIT&nbsp;licensed.`,
+    },
+    win: {
+      title: "cmd",
+      code: `curl -L https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.cmd -o "%TEMP%\\opclaude-get.cmd" && "%TEMP%\\opclaude-get.cmd"`,
+      note: `Uses <code>get.cmd</code> — a plain batch file, no PowerShell execution policy required. Installs <code>uv</code> and Node.js via <code>winget</code> if missing, then Claude Code and the proxy. Requires Node.js and git. Needs an opencode <strong>Go</strong> subscription. MIT&nbsp;licensed.`,
+    },
+  };
+
+  const tabMac     = document.getElementById("tab-mac");
+  const tabWin     = document.getElementById("tab-win");
+  const termTitle  = document.getElementById("term-title");
+  const installCode = document.getElementById("install-code");
+  const installNote = document.getElementById("install-note");
+
+  function switchOS(os) {
+    const cfg = INSTALL[os];
+    installCode.textContent = cfg.code;
+    termTitle.textContent   = cfg.title;
+    installNote.innerHTML   = cfg.note;
+
+    const isWin = os === "win";
+    tabMac.classList.toggle("os-tab--active", !isWin);
+    tabWin.classList.toggle("os-tab--active",  isWin);
+    tabMac.setAttribute("aria-selected", String(!isWin));
+    tabWin.setAttribute("aria-selected", String(isWin));
+  }
+
+  tabMac.addEventListener("click", () => switchOS("mac"));
+  tabWin.addEventListener("click", () => switchOS("win"));
+
+  // auto-select based on visitor's OS
+  if (navigator.userAgent.toLowerCase().includes("windows")) {
+    switchOS("win");
+  }
+
+  // --- copy button -------------------------------------------------------
+
   const copyBtn = document.getElementById("copy-btn");
   if (copyBtn) {
     copyBtn.addEventListener("click", async () => {
-      const text = document.getElementById("install-snippet").textContent;
+      const text = installCode.textContent;
       try {
         await navigator.clipboard.writeText(text);
         const original = copyBtn.textContent;

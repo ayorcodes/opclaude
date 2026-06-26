@@ -146,18 +146,24 @@
 
   <section class="install" id="install">
     <h2 class="section-title">// install</h2>
-    <div class="term-window">
+
+    <div class="os-tabs" role="tablist" aria-label="Operating system">
+      <button class="os-tab os-tab--active" id="tab-mac"  role="tab" aria-selected="true"  aria-controls="install-panel" data-os="mac"  type="button">macOS</button>
+      <button class="os-tab"                id="tab-win"  role="tab" aria-selected="false" aria-controls="install-panel" data-os="win"  type="button">Windows</button>
+    </div>
+
+    <div class="term-window" id="install-panel" role="tabpanel">
       <div class="term-window__chrome">
         <span class="node__dot node__dot--red"></span>
         <span class="node__dot node__dot--yellow"></span>
         <span class="node__dot node__dot--green"></span>
-        <span class="term-window__title">zsh</span>
+        <span class="term-window__title" id="term-title">zsh</span>
         <button class="copy-btn" id="copy-btn" type="button">copy</button>
       </div>
-      <pre class="term-window__body" id="install-snippet"><code>curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash</code></pre>
+      <pre class="term-window__body" id="install-snippet"><code id="install-code">curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash</code></pre>
     </div>
-    <p class="install-note">
-      macOS, needs an opencode <strong>Go</strong> subscription + API key. Pulls the repo into <code>~/.opclaude-src</code> and runs the real installer — read it before piping to bash if that's your thing. MIT licensed.
+    <p class="install-note" id="install-note">
+      Pulls the repo into <code>~/.opclaude-src</code> and runs the installer — prompts to install <code>uv</code> and Claude Code if missing, then asks for your opencode API key. Needs an opencode <strong>Go</strong> subscription. MIT licensed.
     </p>
   </section>
 

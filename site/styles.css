@@ -520,6 +520,33 @@ main { position: relative; z-index: 2; }
 }
 .term-window__body code { color: inherit; }
 
+.os-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.os-tab {
+  padding: 5px 14px;
+  border: 1px solid var(--line);
+  border-radius: 5px 5px 0 0;
+  background: var(--bg-2);
+  color: var(--fg-dimmer);
+  font-family: var(--mono-body);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  border-bottom: 1px solid transparent;
+  position: relative;
+  bottom: -1px;
+}
+.os-tab:hover { color: var(--fg); border-color: var(--line-bright); }
+.os-tab--active {
+  color: var(--fg);
+  background: var(--bg-1);
+  border-color: var(--line-bright);
+  border-bottom-color: var(--bg-1);
+}
+
 .install-note {
   margin-top: 14px;
   color: var(--fg-dimmer);
