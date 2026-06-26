@@ -8,9 +8,22 @@
 # Usage: ./apply.sh
 set -uo pipefail
 
-SITE_PACKAGES="$(uv tool run --from litellm python -c 'import litellm, os; print(os.path.dirname(os.path.dirname(litellm.__file__)))' 2>/dev/null)"
+# Locate litellm's site-packages via the tool's own Python executable.
+# uv tool dir gives e.g. ~/.local/share/uv/tools; litellm's Python is at
+# <tools>/litellm/bin/python (macOS/Linux).
+TOOLS_DIR="$(uv tool dir 2>/dev/null)"
+if [ -z "$TOOLS_DIR" ]; then
+  echo "Could not determine uv tools directory. Is uv installed?" >&2
+  exit 1
+fi
+PYTHON_EXE="$TOOLS_DIR/litellm/bin/python"
+if [ ! -x "$PYTHON_EXE" ]; then
+  echo "Cannot find Python in litellm tool environment ($PYTHON_EXE). Is litellm installed with 'uv tool install litellm'?" >&2
+  exit 1
+fi
+SITE_PACKAGES="$("$PYTHON_EXE" -c 'import litellm, os; print(os.path.dirname(os.path.dirname(litellm.__file__)))')"
 if [ -z "$SITE_PACKAGES" ]; then
-  echo "Could not locate litellm site-packages via uv. Is litellm installed with 'uv tool install litellm'?" >&2
+  echo "Could not locate litellm site-packages. Try reinstalling litellm." >&2
   exit 1
 fi
 

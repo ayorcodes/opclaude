@@ -23,10 +23,22 @@ if (-not $patchExe) {
 }
 $patchCmd = if ($patchExe -is [System.Management.Automation.ApplicationInfo]) { $patchExe.Source } else { $patchExe }
 
-# Locate litellm site-packages via uv
-$sitePkgs = uv tool run --from litellm python -c "import litellm, os; print(os.path.dirname(os.path.dirname(litellm.__file__)))" 2>$null
+# Locate litellm site-packages via the tool's own Python executable.
+# uv tool dir gives e.g. C:\Users\USER\AppData\Roaming\uv\tools
+# The litellm tool lives at <tools>\litellm\Scripts\python.exe on Windows.
+$toolsDir = (uv tool dir 2>$null).Trim()
+if (-not $toolsDir) {
+    Write-Error "Could not determine uv tools directory. Is uv installed?"
+    exit 1
+}
+$pythonExe = Join-Path $toolsDir "litellm\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) {
+    Write-Error "Cannot find Python in litellm tool environment ($pythonExe). Is litellm installed with 'uv tool install litellm'?"
+    exit 1
+}
+$sitePkgs = (& $pythonExe -c "import litellm, os; print(os.path.dirname(os.path.dirname(litellm.__file__)))").Trim()
 if (-not $sitePkgs -or -not (Test-Path $sitePkgs)) {
-    Write-Error "Could not locate litellm site-packages via uv. Is litellm installed with 'uv tool install litellm'?"
+    Write-Error "Could not locate litellm site-packages (got: '$sitePkgs'). Try reinstalling litellm."
     exit 1
 }
 
