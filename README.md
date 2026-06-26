@@ -21,18 +21,31 @@ Keep the Claude Code CLI you already know. **opclaude** routes it through your [
 
 ## Install
 
+**macOS**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash
+```
+
+**Windows** (PowerShell — do not pipe; download first so prompts work)
+```powershell
+iwr -useb https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.ps1 -OutFile "$env:TEMP\opclaude-get.ps1"
+& "$env:TEMP\opclaude-get.ps1"
 ```
 
 Or clone and run the installer directly:
 
 ```bash
+# macOS
 git clone <this-repo> ~/.opclaude-src
-cd ~/.opclaude-src && ./install.sh
+~/.opclaude-src/install.sh
+```
+```powershell
+# Windows
+git clone <this-repo> $env:USERPROFILE\.opclaude-src
+& "$env:USERPROFILE\.opclaude-src\install.ps1"
 ```
 
-The installer checks for and optionally installs `uv` and the Claude Code CLI, prompts for your `OPENCODE_API_KEY`, generates a random proxy key, and symlinks `opclaude` and `opclaude-proxy` into `~/.local/bin`.
+The installer checks for and optionally installs `uv` and the Claude Code CLI (via `winget` on Windows, direct download on macOS), prompts for your `OPENCODE_API_KEY`, generates a random proxy key, and wires up `opclaude` and `opclaude-proxy` on your PATH.
 
 ## Use
 

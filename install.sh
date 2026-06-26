@@ -12,10 +12,18 @@ ENV_FILE="$STATE_DIR/.env"
 BIN_DIR="$HOME/.local/bin"
 LITELLM_VERSION="1.89.3"   # pinned; see FIX.md for why and how to bump safely
 
-if [ "$(uname -s)" != "Darwin" ]; then
-  echo "opclaude v1 only supports macOS. Patching contributions for Linux welcome." >&2
-  exit 1
-fi
+case "$(uname -s)" in
+  Darwin) : ;;
+  MINGW*|MSYS*|CYGWIN*)
+    echo "On Windows, use install.ps1 instead:" >&2
+    echo "  powershell -ExecutionPolicy Bypass -File install.ps1" >&2
+    exit 1
+    ;;
+  *)
+    echo "This script only supports macOS. Linux contributions welcome." >&2
+    exit 1
+    ;;
+esac
 
 echo "== opclaude install =="
 mkdir -p "$STATE_DIR" "$BIN_DIR"
