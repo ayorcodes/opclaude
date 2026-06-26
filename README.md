@@ -9,7 +9,8 @@
   <img src="https://img.shields.io/badge/glm--5.2-e7d24a?style=flat-square&logoColor=000000" alt="glm-5.2"/>
   <img src="https://img.shields.io/badge/minimax--m3-ff5fa8?style=flat-square" alt="minimax-m3"/>
   &nbsp;
-  <img src="https://img.shields.io/badge/macOS-only-111513?style=flat-square&logo=apple&logoColor=d9ebe2" alt="macOS only"/>
+  <img src="https://img.shields.io/badge/macOS-supported-111513?style=flat-square&logo=apple&logoColor=d9ebe2" alt="macOS"/>
+  <img src="https://img.shields.io/badge/Windows-supported-0078d4?style=flat-square&logo=windows&logoColor=white" alt="Windows"/>
   <img src="https://img.shields.io/badge/MIT-license-46584f?style=flat-square" alt="MIT license"/>
 </p>
 
@@ -26,26 +27,27 @@ Keep the Claude Code CLI you already know. **opclaude** routes it through your [
 curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash
 ```
 
-**Windows** (PowerShell — do not pipe; download first so prompts work)
-```powershell
-iwr -useb https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.ps1 -OutFile "$env:TEMP\opclaude-get.ps1"
-& "$env:TEMP\opclaude-get.ps1"
+**Windows** — uses a plain `.cmd` file, no PowerShell execution policy required
+```cmd
+curl -L https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.cmd -o "%TEMP%\opclaude-get.cmd" && "%TEMP%\opclaude-get.cmd"
 ```
 
-Or clone and run the installer directly:
+Or clone and run directly:
 
 ```bash
 # macOS
-git clone <this-repo> ~/.opclaude-src
+git clone https://github.com/ayorcodes/opclaude ~/.opclaude-src
 ~/.opclaude-src/install.sh
 ```
-```powershell
-# Windows
-git clone <this-repo> $env:USERPROFILE\.opclaude-src
-& "$env:USERPROFILE\.opclaude-src\install.ps1"
+```cmd
+:: Windows
+git clone https://github.com/ayorcodes/opclaude %USERPROFILE%\.opclaude-src
+node %USERPROFILE%\.opclaude-src\install.js
 ```
 
-The installer checks for and optionally installs `uv` and the Claude Code CLI (via `winget` on Windows, direct download on macOS), prompts for your `OPENCODE_API_KEY`, generates a random proxy key, and wires up `opclaude` and `opclaude-proxy` on your PATH.
+The installer checks for and optionally installs `uv` and the Claude Code CLI (via `winget` on Windows), prompts for your `OPENCODE_API_KEY`, generates a random proxy key, and wires up `opclaude` and `opclaude-proxy` on your PATH.
+
+**Prerequisites:** git, Node.js 18+ (Windows only — the macOS installer handles everything)
 
 ## Use
 
@@ -104,19 +106,26 @@ opclaude runs a small [litellm](https://github.com/BerriAI/litellm) proxy on `12
 
 - **`config.yaml`** — litellm proxy config: model list (each `claude-*` name maps to an opencode Zen model) plus a registered request hook.
 - **`litellm_hooks.py`** — a `CustomLogger` that strips Claude Code's extended-thinking blocks for models that don't support reasoning, and clamps `max_tokens` for providers with stricter limits than Claude Code assumes.
-- **`patches/`** — a file-level patch for one litellm streaming bug not fixable from config (`IndexError` on certain streaming responses). Re-apply after any litellm upgrade with `patches/apply.sh`. Full write-up in [FIX.md](FIX.md).
+- **`patches/`** — a file-level patch for one litellm streaming bug not fixable from config (`IndexError` on certain streaming responses). Re-apply after any litellm upgrade with `patches/apply.sh` (macOS) or `patches/apply.ps1` (Windows). Full write-up in [FIX.md](FIX.md).
 
 </details>
 
 ## Upgrading litellm
 
 ```bash
+# macOS
 uv tool install litellm==<new-version> --force --with 'litellm[proxy,extra-proxy]'
 patches/apply.sh
 opclaude-proxy restart
 ```
+```cmd
+:: Windows
+uv tool install litellm==<new-version> --force --with "litellm[proxy,extra-proxy]"
+powershell -ExecutionPolicy Bypass -File patches\apply.ps1
+opclaude-proxy restart
+```
 
-See [FIX.md](FIX.md) if `patches/apply.sh` reports a failed hunk.
+See [FIX.md](FIX.md) if the patch step reports a failed hunk.
 
 ## Security
 
