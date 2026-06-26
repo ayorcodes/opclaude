@@ -114,16 +114,18 @@ opclaude runs a small [litellm](https://github.com/BerriAI/litellm) proxy on `12
 
 ```bash
 # macOS
-uv tool install litellm==<new-version> --force --with 'litellm[proxy,extra-proxy]'
+uv tool install litellm==<new-version> --python 3.11 --force --with 'litellm[proxy,extra-proxy]'
 patches/apply.sh
 opclaude-proxy restart
 ```
 ```cmd
 :: Windows
-uv tool install litellm==<new-version> --force --with "litellm[proxy,extra-proxy]"
+uv tool install litellm==<new-version> --python 3.11 --force --with "litellm[proxy,extra-proxy]"
 powershell -ExecutionPolicy Bypass -File patches\apply.ps1
 opclaude-proxy restart
 ```
+
+> **`--python 3.11` is required.** litellm 1.x crashes on Python 3.13+ due to a FastAPI lifespan incompatibility. uv will download 3.11 automatically if it isn't already cached.
 
 See [FIX.md](FIX.md) if the patch step reports a failed hunk.
 

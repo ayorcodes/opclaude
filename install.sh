@@ -11,6 +11,7 @@ STATE_DIR="$HOME/.config/opclaude"
 ENV_FILE="$STATE_DIR/.env"
 BIN_DIR="$HOME/.local/bin"
 LITELLM_VERSION="1.89.3"   # pinned; see FIX.md for why and how to bump safely
+PYTHON_VERSION="3.11"      # litellm 1.x is not compatible with Python 3.14+; pin to 3.11
 
 case "$(uname -s)" in
   Darwin) : ;;
@@ -70,7 +71,7 @@ fi
 # --- litellm + our patch --------------------------------------------------
 echo
 echo "Installing litellm $LITELLM_VERSION via uv ..."
-uv tool install "litellm==$LITELLM_VERSION" --force --with 'litellm[proxy,extra-proxy]'
+uv tool install "litellm==$LITELLM_VERSION" --python "$PYTHON_VERSION" --force --with 'litellm[proxy,extra-proxy]'
 
 echo "Applying our patch for litellm bug #2 (see FIX.md) ..."
 "$REPO_DIR/patches/apply.sh"

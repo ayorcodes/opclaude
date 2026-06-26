@@ -21,6 +21,7 @@ const STATE_DIR       = path.join(os.homedir(), ".config", "opclaude");
 const ENV_FILE        = path.join(STATE_DIR, ".env");
 const BIN_DIR         = path.join(os.homedir(), ".local", "bin");
 const LITELLM_VERSION = "1.89.3";
+const PYTHON_VERSION  = "3.11";   // litellm 1.x is not compatible with Python 3.14+
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -147,7 +148,7 @@ function readEnv() {
 
   // --- litellm + patch -----------------------------------------------------
   console.log(`\nInstalling litellm ${LITELLM_VERSION} via uv ...`);
-  run(`uv tool install "litellm==${LITELLM_VERSION}" --force --with "litellm[proxy,extra-proxy]"`);
+  run(`uv tool install "litellm==${LITELLM_VERSION}" --python ${PYTHON_VERSION} --force --with "litellm[proxy,extra-proxy]"`);
 
   console.log("Applying our patch for litellm bug #2 (see FIX.md) ...");
   run(`powershell -ExecutionPolicy Bypass -File "${path.join(REPO_DIR, "patches", "apply.ps1")}"`);

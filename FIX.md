@@ -89,6 +89,16 @@ If "Content block not found" or duplicate `message_delta` events resurface after
 - `litellm_hooks.py` — added `INPUT_TOKEN_SAFETY_FACTOR = 1.2`, applied to the `token_counter` estimate before computing the budget (`input_tokens = int(input_tokens * INPUT_TOKEN_SAFETY_FACTOR)`), to compensate for the fallback tokenizer's undercount on these models.
 - If `400` context-length errors recur for minimax, increase `INPUT_TOKEN_SAFETY_FACTOR` further — the underlying issue is a tokenizer mismatch, not an exact formula, so this is an empirical safety margin rather than a precise fix.
 
+## 9. Windows: litellm proxy crashes immediately on startup (`merged_lifespan` infinite recursion)
+
+**Cause:** `uv tool install litellm` on a fresh Windows machine pulls the latest available Python (3.14 as of mid-2026). litellm 1.x uses FastAPI lifespan hooks in a way that triggers an infinite mutual recursion in `fastapi/routing.py::merged_lifespan` under Python 3.13+, crashing the server before it can accept a single request.
+
+**Fix:** pin the uv tool environment to Python 3.11, which litellm is tested against:
+```
+uv tool install "litellm==<version>" --python 3.11 --force --with "litellm[proxy,extra-proxy]"
+```
+uv downloads Python 3.11 automatically if it isn't already cached — no separate install needed. Both `install.sh` and `install.js` already pass `--python 3.11` for this reason.
+
 ## After any of these fixes
 
 Restart the proxy:
