@@ -71,7 +71,13 @@ async function start() {
     cwd: REPO_DIR,
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    env: {
+      ...process.env,
+      // Force UTF-8 for stdout/stderr so litellm's Unicode banner doesn't
+      // crash on Windows terminals that default to cp1252.
+      PYTHONUTF8: "1",
+      PYTHONIOENCODING: "utf-8",
+    },
   });
   proc.unref();
   fs.writeFileSync(PID_FILE, String(proc.pid));

@@ -50,6 +50,10 @@ function Start-Proxy {
     Remove-Item $PID_FILE -ErrorAction SilentlyContinue
     Write-Host "Starting opclaude proxy on http://${HOST_ADDR}:${PORT} ..."
 
+    # Set PYTHONUTF8=1 so litellm's Unicode banner doesn't crash on Windows
+    # terminals that default to cp1252.
+    $env:PYTHONUTF8 = "1"
+    $env:PYTHONIOENCODING = "utf-8"
     $proc = Start-Process -FilePath "litellm" `
         -ArgumentList "--config `"$REPO_DIR\config.yaml`" --host $HOST_ADDR --port $PORT" `
         -WorkingDirectory $REPO_DIR `
