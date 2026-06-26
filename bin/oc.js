@@ -78,7 +78,7 @@ if (subcmd === "--escalate") {
   const args = extra
     ? ["--resume", vars.SESSION_ID, "--fork-session", extra]
     : ["--resume", vars.SESSION_ID, "--fork-session"];
-  const r = spawnSync("claude", args, { stdio: "inherit", env: process.env });
+  const r = spawnSync("claude", args, { stdio: "inherit", shell: process.platform === "win32", env: process.env });
   process.exit(r.status ?? 0);
 }
 
@@ -90,7 +90,7 @@ if (subcmd === "--cheap" || subcmd === "--downgrade") {
   const args = extra
     ? ["--continue", "--fork-session", "--model", "claude-auto", extra]
     : ["--continue", "--fork-session", "--model", "claude-auto"];
-  const r = spawnSync("claude", args, { stdio: "inherit", env: proxyEnv() });
+  const r = spawnSync("claude", args, { stdio: "inherit", shell: process.platform === "win32", env: proxyEnv() });
   process.exit(r.status ?? 0);
 }
 
@@ -110,7 +110,7 @@ const { tier, model } = decision;
 if (tier === "critical") {
   process.stderr.write(`oc: routing to real Claude --model ${model} (critical reasoning task).\n`);
   const r = spawnSync("claude", ["--model", model, ...process.argv.slice(2)],
-    { stdio: "inherit", env: process.env });
+    { stdio: "inherit", shell: process.platform === "win32", env: process.env });
   process.exit(r.status ?? 0);
 }
 
@@ -122,5 +122,5 @@ fs.writeFileSync(LAST_SESSION,
 
 process.stderr.write(`oc: auto-routing this session via opclaude proxy (first turn: ${tier} -> ${model}).\n`);
 const r = spawnSync("claude", ["--model", "claude-auto", "--session-id", SESSION_ID, ...process.argv.slice(2)],
-  { stdio: "inherit", env: proxyEnv() });
+  { stdio: "inherit", shell: process.platform === "win32", env: proxyEnv() });
 process.exit(r.status ?? 0);

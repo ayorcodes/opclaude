@@ -71,6 +71,7 @@ async function start() {
     cwd: REPO_DIR,
     detached: true,
     stdio: ["ignore", logFd, logFd],
+    windowsHide: true,  // suppress the new console window that detached spawns on Windows
     env: {
       ...process.env,
       // Force UTF-8 for stdout/stderr so litellm's Unicode banner doesn't

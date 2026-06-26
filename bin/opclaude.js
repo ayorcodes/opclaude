@@ -122,6 +122,9 @@ const modelArgs = hasModel ? [] : ["--model", "claude-deepseek-v4-pro"];
 
 const result = spawnSync("claude", [...modelArgs, ...allArgs], {
   stdio: "inherit",
+  // npm installs claude as claude.cmd on Windows; without shell:true spawnSync
+  // looks for claude.exe and silently exits.
+  shell: process.platform === "win32",
   env: {
     ...process.env,
     ANTHROPIC_BASE_URL: "http://127.0.0.1:4000",
