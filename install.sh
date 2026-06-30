@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 # Sets up opclaude: a local litellm proxy that lets Claude Code talk to
 # opencode Zen models (Kimi, Qwen, DeepSeek, GLM, Minimax, gpt-5.3-codex)
@@ -94,10 +95,31 @@ if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
   LITELLM_MASTER_KEY="sk-$(openssl rand -hex 32)"
 fi
 
+# GitHub Models is optional — skip if not provided
+if [ -z "${GITHUB_API_KEY:-}" ]; then
+  echo
+  read -r -s -p "Enter a GitHub PAT for GitHub Models (optional, press Enter to skip): " GITHUB_API_KEY
+  echo
+fi
+
+# Ollama (local models) — optional
+if command -v ollama >/dev/null 2>&1; then
+  echo
+  echo "Ollama detected. Ollama models (claude-ol-*) in config.yaml route here."
+  echo "  ollama list           — see installed models"
+  echo "  opclaude models ol    — see configured Ollama model names"
+  echo "  Edit config.yaml model: fields to match your 'ollama list' output."
+else
+  echo
+  echo "Ollama not found. Ollama models (claude-ol-*) will be skipped unless you install Ollama"
+  echo "  later (https://ollama.com) and restart the proxy."
+fi
+
 umask 077
 cat > "$ENV_FILE" <<EOF
 OPENCODE_API_KEY=$OPENCODE_API_KEY
 LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY
+$([ -n "${GITHUB_API_KEY:-}" ] && echo "GITHUB_API_KEY=$GITHUB_API_KEY")
 EOF
 echo "Saved secrets to $ENV_FILE (mode 600)."
 

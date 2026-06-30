@@ -19,27 +19,52 @@ STATE_DIR="$HOME/.config/opclaude"
 ENV_FILE="$STATE_DIR/.env"
 
 if [ "${1:-}" = "models" ]; then
-  awk '
+  filter="${2:-oc}"   # default: opencode only; 'ol' = Ollama only; 'all' = both
+  awk -v filter="$filter" '
     /^[[:space:]]*- model_name:/ {
-      if (name != "") printf "  %-24s -> %s\n", name, (target == "" ? "?" : target)
+      if (name != "") {
+        group = (name ~ /^claude-ol-/) ? "ol" : "oc"
+        groups[group] = groups[group] sprintf("  %-34s -> %s\n", name, (target == "" ? "?" : target))
+      }
       sub(/^[[:space:]]*- model_name:[[:space:]]*/, "")
       name = $0
       target = ""
       next
     }
-    /^[[:space:]]*model:[[:space:]]*openai\// {
+    /^[[:space:]]*model:[[:space:]]*(openai|github|ollama)\// {
       if (target == "") {
         t = $0
-        sub(/^[[:space:]]*model:[[:space:]]*openai\//, "", t)
+        sub(/^[[:space:]]*model:[[:space:]]*(openai|github|ollama)\//, "", t)
         target = t
       }
     }
     END {
-      if (name != "") printf "  %-24s -> %s\n", name, (target == "" ? "?" : target)
+      if (name != "") {
+        group = (name ~ /^claude-ol-/) ? "ol" : "oc"
+        groups[group] = groups[group] sprintf("  %-34s -> %s\n", name, (target == "" ? "?" : target))
+      }
+      if (filter == "oc" || filter == "all") {
+        print "opencode models  (claude-oc-* / claude-*):"
+        printf "%s", groups["oc"]
+      }
+      if (filter == "all") print ""
+      if (filter == "ol" || filter == "all") {
+        print "Ollama models  (claude-ol-*):"
+        if (groups["ol"] == "") {
+          print "  (none configured)"
+        } else {
+          printf "%s", groups["ol"]
+        }
+      }
     }
   ' "$REPO_DIR/config.yaml"
   echo
-  echo "Run with: opclaude --model <name>   (default: claude-deepseek-v4-pro)"
+  echo "Filter:  opclaude models       — opencode only (default)"
+  echo "         opclaude models ol    — Ollama only"
+  echo "         opclaude models all   — both"
+  echo
+  echo "Run with:  opclaude --model <name>           (e.g. claude-deepseek-v4-pro)"
+  echo "           opclaude --model claude-ol-<name> (Ollama-routed)"
   exit 0
 fi
 

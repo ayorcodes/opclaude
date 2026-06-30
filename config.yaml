@@ -1,12 +1,12 @@
 model_list:
 # Kimi
-  - model_name: claude-kimi-2.7
-    litellm_params:
-      model: openai/kimi-k2.7-code
-      api_base: https://opencode.ai/zen/go/v1
-      api_key: os.environ/OPENCODE_API_KEY
-      use_chat_completions_api: true
-      drop_params: true
+  # - model_name: claude-kimi-2.7
+  #   litellm_params:
+  #     model: openai/kimi-k2.7-code
+  #     api_base: https://opencode.ai/zen/go/v1
+  #     api_key: os.environ/OPENCODE_API_KEY
+  #     use_chat_completions_api: true
+  #     drop_params: true
 
   - model_name: claude-kimi-2.6
     litellm_params:
@@ -16,34 +16,34 @@ model_list:
       use_chat_completions_api: true
       drop_params: true
 
-  - model_name: claude-kimi-2.5
-    litellm_params:
-      model: openai/kimi-k2.5
-      api_base: https://opencode.ai/zen/go/v1
-      api_key: os.environ/OPENCODE_API_KEY
-      use_chat_completions_api: true
-      drop_params: true
+  # - model_name: claude-kimi-2.5
+  #   litellm_params:
+  #     model: openai/kimi-k2.5
+  #     api_base: https://opencode.ai/zen/go/v1
+  #     api_key: os.environ/OPENCODE_API_KEY
+  #     use_chat_completions_api: true
+  #     drop_params: true
 
 # Qwen
-  - model_name: claude-qwen-3.5-plus
-    litellm_params:
-      model: openai/qwen3.5-plus
-      api_base: https://opencode.ai/zen/go/v1
-      api_key: os.environ/OPENCODE_API_KEY
-      drop_params: true
-      use_chat_completions_api: true
-    model_info:
-      supports_reasoning: false
+  # - model_name: claude-qwen-3.5-plus
+  #   litellm_params:
+  #     model: openai/qwen3.5-plus
+  #     api_base: https://opencode.ai/zen/go/v1
+  #     api_key: os.environ/OPENCODE_API_KEY
+  #     drop_params: true
+  #     use_chat_completions_api: true
+  #   model_info:
+  #     supports_reasoning: false
 
-  - model_name: claude-qwen-3.6-plus
-    litellm_params:
-      model: openai/qwen3.6-plus
-      api_base: https://opencode.ai/zen/go/v1
-      api_key: os.environ/OPENCODE_API_KEY
-      drop_params: true
-      use_chat_completions_api: true
-    model_info:
-      max_tokens: 8192
+  # - model_name: claude-qwen-3.6-plus
+  #   litellm_params:
+  #     model: openai/qwen3.6-plus
+  #     api_base: https://opencode.ai/zen/go/v1
+  #     api_key: os.environ/OPENCODE_API_KEY
+  #     drop_params: true
+  #     use_chat_completions_api: true
+  #   model_info:
+  #     max_tokens: 8192
 
   - model_name: claude-qwen-3.7-plus
     litellm_params:
@@ -89,21 +89,146 @@ model_list:
       api_key: os.environ/OPENCODE_API_KEY
       drop_params: true
 
-  - model_name: claude-minimax-m2.5
-    litellm_params:
-      model: openai/minimax-m2.5
-      api_base: https://opencode.ai/zen/go/v1
-      api_key: os.environ/OPENCODE_API_KEY
-      drop_params: true
+  # - model_name: claude-minimax-m2.5
+  #   litellm_params:
+  #     model: openai/minimax-m2.5
+  #     api_base: https://opencode.ai/zen/go/v1
+  #     api_key: os.environ/OPENCODE_API_KEY
+  #     drop_params: true
+
+  # GitHub Models (requires GITHUB_API_KEY — a PAT with models:read scope)
+  # - model_name: claude-gh-gpt-4o
+  #   litellm_params:
+  #     model: github/gpt-4o
+  #     api_key: os.environ/GITHUB_API_KEY
+  #     drop_params: true
+
+  # - model_name: claude-gh-gpt-4.1
+  #   litellm_params:
+  #     model: github/gpt-4.1
+  #     api_key: os.environ/GITHUB_API_KEY
+  #     drop_params: true
+
+  # - model_name: claude-gh-o4-mini
+  #   litellm_params:
+  #     model: github/o4-mini
+  #     api_key: os.environ/GITHUB_API_KEY
+  #     drop_params: true
+  #   model_info:
+  #     supports_reasoning: true
+
+  # - model_name: claude-gh-o3
+  #   litellm_params:
+  #     model: github/o3
+  #     api_key: os.environ/GITHUB_API_KEY
+  #     drop_params: true
+  #   model_info:
+  #     supports_reasoning: true
 
   # OpenAI
-  - model_name: claude-gpt-5.3-codex
+  # - model_name: claude-gpt-5.3-codex
+  #   litellm_params:
+  #     model: openai/gpt-5.3-codex
+  #     api_base: https://opencode.ai/zen/v1
+  #     api_key: os.environ/OPENCODE_API_KEY
+  #     use_chat_completions_api: true
+  #     drop_params: true
+
+  # Ollama models — requires Ollama running at localhost:11434.
+  # `claude-ol-` prefix identifies Ollama-routed models (many are cloud-backed
+  # via Ollama's gateway; only models with a real GB size in `ollama list` run
+  # locally). The `model:` value must match `ollama list` exactly.
+
+  - model_name: claude-ol-deepseek-v4-flash[1M]
     litellm_params:
-      model: openai/gpt-5.3-codex
-      api_base: https://opencode.ai/zen/v1
-      api_key: os.environ/OPENCODE_API_KEY
+      model: openai/deepseek-v4-flash:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
       use_chat_completions_api: true
-      drop_params: true
+    model_info:
+      context_window: 1048576
+
+  - model_name: claude-ol-deepseek-v4-pro[512K]
+    litellm_params:
+      model: openai/deepseek-v4-pro:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
+      use_chat_completions_api: true
+    model_info:
+      context_window: 524288
+
+  # - model_name: claude-ol-qwen3-coder
+  #   litellm_params:
+  #     model: openai/qwen3-coder:480b-cloud
+  #     api_base: http://localhost:11434/v1
+  #     api_key: ollama
+  #     use_chat_completions_api: true
+
+  # - model_name: claude-ol-qwen3-coder-next
+  #   litellm_params:
+  #     model: openai/qwen3-coder-next:cloud
+  #     api_base: http://localhost:11434/v1
+  #     api_key: ollama
+  #     use_chat_completions_api: true
+
+  - model_name: claude-ol-minimax-m2.7[192K]
+    litellm_params:
+      model: openai/minimax-m2.7:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
+      use_chat_completions_api: true
+    model_info:
+      context_window: 196608
+
+  - model_name: claude-ol-minimax-m3[512K]
+    litellm_params:
+      model: openai/minimax-m3:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
+      use_chat_completions_api: true
+    model_info:
+      context_window: 524288
+
+  - model_name: claude-ol-glm-5.1[198K]
+    litellm_params:
+      model: openai/glm-5.1:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
+      use_chat_completions_api: true
+    model_info:
+      context_window: 202752
+
+  - model_name: claude-ol-glm-5.2[1M]
+    litellm_params:
+      model: openai/glm-5.2:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
+      use_chat_completions_api: true
+    model_info:
+      context_window: 1000000
+
+  - model_name: claude-ol-kimi-k2.6[256K]
+    litellm_params:
+      model: openai/kimi-k2.6:cloud
+      api_base: http://localhost:11434/v1
+      api_key: ollama
+      use_chat_completions_api: true
+    model_info:
+      context_window: 262144
+
+  # - model_name: claude-ol-gpt-oss
+  #   litellm_params:
+  #     model: openai/gpt-oss:120b-cloud
+  #     api_base: http://localhost:11434/v1
+  #     api_key: ollama
+  #     use_chat_completions_api: true
+
+  # - model_name: claude-ol-gemma4-26b
+  #   litellm_params:
+  #     model: openai/gemma4:26b
+  #     api_base: http://localhost:11434/v1
+  #     api_key: ollama
+  #     use_chat_completions_api: true
 
   # Sentinel for `oc`'s per-turn auto-routing. litellm_hooks.py rewrites the
   # model per request before it's sent upstream, so these params are only a

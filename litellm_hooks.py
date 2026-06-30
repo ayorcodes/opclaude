@@ -72,6 +72,37 @@ def _strip_thinking(messages):
 # thousands for extended-thinking-capable models), so clamp for qwen models.
 QWEN_MAX_TOKENS = 8192
 
+# Per-model output token caps — first matching entry wins (substring match on
+# lowercased model name). Applied before the context-window budget check below.
+# Covers both cloud and local (Ollama) variants of the same model family.
+MODEL_MAX_TOKENS = {
+    "deepseek-v4-flash": 65536,   # opencode + Ollama limit
+}
+
+# Ollama-routed models use the claude-ol- prefix. Any Ollama model not
+# matched by MODEL_MAX_TOKENS above gets this conservative default cap, since
+# Ollama models commonly reject max_tokens above ~32k.
+LOCAL_MODEL_PREFIX = "claude-ol-"
+LOCAL_DEFAULT_MAX_TOKENS = 32768
+
+# Claude Code's extended thinking sends `thinking: {type: "enabled",
+# budget_tokens: N}`. Ollama's /v1/chat/completions accepts `reasoning_effort`
+# instead. We map budget_tokens to effort level and drop the Anthropic-specific
+# `thinking` key so it doesn't cause a 400 from the Ollama endpoint.
+#
+# Only models confirmed to support Ollama thinking (via `/set think` test) get
+# reasoning_effort forwarded. Others just have the Anthropic keys stripped.
+# Verified 2026-06-29: deepseek-v4-flash, deepseek-v4-pro, glm-5.2 → yes
+#                      qwen3-coder → warns "does not support thinking output"
+LOCAL_REASONING_MODEL_SUBSTRINGS = ("deepseek-v4", "glm-5", "minimax-m2", "gpt-oss", "kimi")
+
+_REASONING_EFFORT_TIERS = [
+    (20_000, "max"),
+    (8_000,  "high"),
+    (3_000,  "medium"),
+    (1,      "low"),
+]
+
 # Total context window (input + output tokens) for models whose upstream
 # provider enforces it strictly. Claude Code requests a fixed large
 # max_tokens (e.g. 120000) irrespective of how much input it's also sending,
@@ -186,6 +217,39 @@ class ClampClaudeCodeRequest(CustomLogger):
             max_tokens = data.get("max_tokens")
             if not isinstance(max_tokens, int) or max_tokens < 1 or max_tokens > 65536:
                 data["max_tokens"] = QWEN_MAX_TOKENS
+
+        # Per-model caps (deepseek-v4-flash, etc.) — first match wins.
+        for key, limit in MODEL_MAX_TOKENS.items():
+            if key in model_lower:
+                max_tokens = data.get("max_tokens")
+                if isinstance(max_tokens, int) and max_tokens > limit:
+                    data["max_tokens"] = limit
+                break
+        else:
+            # Conservative fallback for local Ollama models not listed above.
+            if model_lower.startswith(LOCAL_MODEL_PREFIX):
+                max_tokens = data.get("max_tokens")
+                if isinstance(max_tokens, int) and max_tokens > LOCAL_DEFAULT_MAX_TOKENS:
+                    data["max_tokens"] = LOCAL_DEFAULT_MAX_TOKENS
+
+        # Map Claude Code's extended-thinking request to Ollama reasoning_effort.
+        # The Anthropic `thinking` key causes a 400 on Ollama endpoints, so pop
+        # it regardless. Only forward reasoning_effort to models confirmed to
+        # support Ollama thinking (LOCAL_REASONING_MODEL_SUBSTRINGS).
+        if model_lower.startswith(LOCAL_MODEL_PREFIX):
+            thinking = data.pop("thinking", None)
+            data.pop("betas", None)
+            supports_reasoning = any(
+                s in model_lower for s in LOCAL_REASONING_MODEL_SUBSTRINGS
+            )
+            if supports_reasoning and isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                budget = thinking.get("budget_tokens", 0)
+                effort = next(
+                    (lvl for threshold, lvl in _REASONING_EFFORT_TIERS if budget >= threshold),
+                    None,
+                )
+                if effort:
+                    data["reasoning_effort"] = effort
 
         for key, context_limit in CONTEXT_LIMITS.items():
             if key in model_lower:
