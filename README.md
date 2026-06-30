@@ -1,4 +1,4 @@
-<img src="./site/header.svg" alt="opclaude — one opencode Go subscription, every model" width="900"/>
+<img src="./site/header.svg" alt="opclaude — route Claude Code through any backend" width="900"/>
 
 <br/>
 
@@ -16,9 +16,9 @@
 
 ---
 
-Keep the Claude Code CLI you already know. **opclaude** routes it through your [opencode](https://opencode.ai) Go subscription instead of Anthropic's API — Kimi, Qwen, DeepSeek, GLM, and Minimax, all under one flat bill instead of separate per-model invoices.
+Keep the Claude Code CLI you already know. **opclaude** routes it through any OpenAI-compatible backend — your [opencode](https://opencode.ai) Go subscription, local [Ollama](https://ollama.com) models, or any provider that speaks the OpenAI API. Ships preconfigured with both.
 
-> **Requires** an opencode **Go** subscription + API key → [opencode.ai](https://opencode.ai)
+> **Default backends:** [opencode](https://opencode.ai) Go subscription (cloud models — recommended) and Ollama (local + cloud-backed). Swap or add providers by editing `config.yaml`.
 
 ## Install
 
@@ -45,7 +45,7 @@ git clone https://github.com/ayorcodes/opclaude %USERPROFILE%\.opclaude-src
 node %USERPROFILE%\.opclaude-src\install.js
 ```
 
-The installer checks for and optionally installs `uv` and the Claude Code CLI (via `winget` on Windows), prompts for your `OPENCODE_API_KEY`, generates a random proxy key, and wires up `opclaude` and `opclaude-proxy` on your PATH.
+The installer checks for and optionally installs `uv` and the Claude Code CLI (via `winget` on Windows), prompts for your `OPENCODE_API_KEY` (skip if using Ollama only), generates a random proxy key, and wires up `opclaude` and `opclaude-proxy` on your PATH.
 
 **Prerequisites:** git, Node.js 18+ (Windows only — the macOS installer handles everything)
 
@@ -99,12 +99,12 @@ Run `opclaude models` any time for the live list.
 
 ## How it works
 
-opclaude runs a small [litellm](https://github.com/BerriAI/litellm) proxy on `127.0.0.1` that speaks Anthropic's API to Claude Code on one side, and your opencode Go subscription on the other. Claude Code talks to it exactly like it talks to Anthropic — same CLI, same flags — while opclaude smooths over each model's quirks behind the scenes.
+opclaude runs a small [litellm](https://github.com/BerriAI/litellm) proxy on `127.0.0.1` that speaks Anthropic's API to Claude Code on one side, and any OpenAI-compatible backend on the other. Claude Code talks to it exactly like it talks to Anthropic — same CLI, same flags — while opclaude smooths over each model's quirks behind the scenes. opencode is the default cloud backend; Ollama is preconfigured for local models.
 
 <details>
 <summary>internals</summary>
 
-- **`config.yaml`** — litellm proxy config: model list (each `claude-*` name maps to an opencode Zen model) plus a registered request hook.
+- **`config.yaml`** — litellm proxy config: model list (each `claude-*` name maps to a backend model — opencode Zen, Ollama, or any OpenAI-compatible endpoint) plus a registered request hook.
 - **`litellm_hooks.py`** — a `CustomLogger` that strips Claude Code's extended-thinking blocks for models that don't support reasoning, and clamps `max_tokens` for providers with stricter limits than Claude Code assumes.
 - **`patches/`** — a file-level patch for one litellm streaming bug not fixable from config (`IndexError` on certain streaming responses). Re-apply after any litellm upgrade with `patches/apply.sh` (macOS) or `patches/apply.ps1` (Windows). Full write-up in [FIX.md](FIX.md).
 

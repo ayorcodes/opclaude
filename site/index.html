@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>opclaude — claude code, routed through opencode</title>
-<meta name="description" content="Use the Claude Code CLI you already know, routed through an opencode Go subscription instead of Anthropic's API. One subscription, six models, no separate API bills." />
+<title>opclaude — claude code, routed through any backend</title>
+<meta name="description" content="Use the Claude Code CLI you already know, routed through any OpenAI-compatible backend — opencode, Ollama, or your own provider. Ships preconfigured with opencode and Ollama." />
 <link rel="icon" href="data:," />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -33,18 +33,18 @@
   <section class="hero">
     <p class="hero__kicker">// a local proxy that sits in front of claude code</p>
     <h1 class="hero__title">
-      one <span class="accent">opencode Go</span> subscription. every model.
+      one proxy. <span class="accent">any backend</span>. every model.
     </h1>
     <p class="hero__sub">
-      Keep the Claude Code CLI you already know. opclaude points it at your
-      <strong>opencode Go subscription</strong> instead of Anthropic's API —
-      Kimi, Qwen, DeepSeek, GLM, and Minimax, all under one flat bill instead
-      of separate per-model invoices.
+      Keep the Claude Code CLI you already know. opclaude routes it through
+      any OpenAI-compatible backend — your <strong>opencode Go subscription</strong>,
+      local <strong>Ollama</strong> models, or any provider that speaks the OpenAI API.
+      Ships preconfigured with both.
     </p>
     <p class="requirement-note">
       <span class="requirement-note__mark">!</span>
-      requires an opencode <strong>Go</strong> subscription + API key —
-      <a href="https://opencode.ai" rel="noopener">get one at opencode.ai &#8599;</a>
+      default cloud backend: <a href="https://opencode.ai" rel="noopener">opencode Go &#8599;</a>
+      (recommended) — or bring your own OpenAI-compatible endpoint via <code>config.yaml</code>.
     </p>
   </section>
 
@@ -117,7 +117,7 @@
   <section class="what" id="what">
     <p>
       <span class="what__line">opclaude is a small <a href="https://github.com/BerriAI/litellm" rel="noopener">litellm</a> proxy plus a one-command installer.</span>
-      <span class="what__line">It speaks Anthropic's API on one side, opencode Zen models on the other — Claude Code never knows the difference.</span>
+      <span class="what__line">It speaks Anthropic's API on one side, any OpenAI-compatible backend on the other — Claude Code never knows the difference.</span>
     </p>
   </section>
 
@@ -125,11 +125,11 @@
     <h2 class="section-title">// how it works</h2>
     <p class="how__text">
       opclaude runs a small proxy on <code>127.0.0.1</code> that speaks
-      Anthropic's API to Claude Code on one side, and your opencode Go
-      subscription on the other. Claude Code talks to it exactly like it
-      talks to Anthropic — same CLI, same flags — while opclaude smooths over
-      each model's quirks behind the scenes. Your opencode key never leaves
-      your machine.
+      Anthropic's API to Claude Code on one side, and any OpenAI-compatible
+      backend on the other. Claude Code talks to it exactly like it talks to
+      Anthropic — same CLI, same flags — while opclaude smooths over each
+      model's quirks behind the scenes. Ships preconfigured for opencode (cloud)
+      and Ollama (local). Your keys never leave your machine.
     </p>
   </section>
 
@@ -163,7 +163,7 @@
       <pre class="term-window__body" id="install-snippet"><code id="install-code">curl -fsSL https://raw.githubusercontent.com/ayorcodes/opclaude/main/get.sh | bash</code></pre>
     </div>
     <p class="install-note" id="install-note">
-      Pulls the repo into <code>~/.opclaude-src</code> and runs the installer — prompts to install <code>uv</code> and Claude Code if missing, then asks for your opencode API key. Needs an opencode <strong>Go</strong> subscription. MIT licensed.
+      Pulls the repo into <code>~/.opclaude-src</code> and runs the installer — prompts to install <code>uv</code> and Claude Code if missing, then asks for your opencode API key (optional — skip if using Ollama only). MIT licensed.
     </p>
   </section>
 
