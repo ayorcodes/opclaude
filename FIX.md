@@ -99,6 +99,36 @@ uv tool install "litellm==<version>" --python 3.11 --force --with "litellm[proxy
 ```
 uv downloads Python 3.11 automatically if it isn't already cached — no separate install needed. Both `install.sh` and `install.js` already pass `--python 3.11` for this reason.
 
+## 10. minimax-m3 `API Error: Content block not found` mid/after streaming (resurface of #2/#5)
+
+**Symptom:** with minimax-m3 (and intermittently any model routed through the `use_chat_completions_url_for_anthropic_messages: true` adapter), Claude Code prints `API Error: Content block not found` and the turn dies — often right as the response finishes, sometimes repeatedly mid-session. FIX.md #5 predicted this exact resurface and said the bug would then be in the hold-and-merge logic itself; it was.
+
+**Cause:** minimax (via opencode zen) ends its stream with a *sequence* of terminal chunks in an order the hold-and-merge mechanism wasn't built for:
+
+1. an **empty-`choices` chunk** (no usage) → translated to `message_delta(stop_reason=None)`. This is the *first* `message_delta`, and it closes the content block (`sent_content_block_finish=True`) *without* being held (stop_reason is None).
+2. the real **`finish_reason=stop` chunk** (no usage) → another `message_delta(stop_reason=end_turn)`. Because the block is already closed, the `message_delta` branch that would *hold* it is skipped, so it's emitted directly as a second, un-held terminal.
+3. the **usage trailer** (`finish_reason=None`, `usage` present, `choices=[<empty delta>]`) → *this* is the bug. `translate_streaming_openai_response_to_anthropic` only treated an empty-`choices` chunk (OpenAI's trailer shape) as a terminal `message_delta`. minimax's trailer keeps a non-empty `choices` list with an empty delta, so it fell through to `_translate_streaming_openai_chunk_to_anthropic`, found no content/tool_calls/reasoning, and returned `text_delta("")` — a spurious **`content_block_delta` emitted *after* the terminal `message_delta`**. Anthropic SSE forbids any content delta after the final `message_delta`; Claude Code reads the `message_delta` as terminal, then a content delta for an already-closed block arrives → `Content block not found`.
+
+Reproduced and confirmed by capturing the proxy's emitted SSE event order pre-fix:
+```
+... content_block_stop(0) | message_delta | message_delta | content_block_delta(0) | message_stop
+                                                                          ^^^^^^^^^^^^^^^^^^^^ stray
+```
+
+**Fix (in `/Users/ayorcodes/.local/share/uv/tools/litellm/lib/python3.11/site-packages/litellm/` — same two adapter files as bug #2; pinned to 3.11 per bug #9):**
+
+1. `transformation.py::translate_streaming_openai_response_to_anthropic` — added `_streaming_chunk_has_content` and treat a chunk as terminal when it's a *usage-only trailer*: `choices` non-empty, `finish_reason is None`, `usage` present, and every choice's delta is empty (no `content`/`tool_calls`/`reasoning_content`/`thinking_blocks`). That trailer now becomes a `message_delta(stop_reason=None)` (which the existing `will_merge_into_held` merge or the `queued_usage_chunk`/`sent_stop_reason` drop logic then handles correctly) instead of a stray `content_block_delta`.
+
+2. `streaming_iterator.py` — added a `sent_stop_reason` flag (set True whenever a real stop_reason `message_delta` is emitted — merge path, direct-emit `holding_chunk`/`else` branches, and both end-of-stream/`StopIteration` held-chunk flushes, in both `__next__` and `__anext__`). After it's set, any further `content_block_delta` is dropped (`continue`) — defense-in-depth so a straggler content delta can never follow the terminal `message_delta`, regardless of what some provider sends last. (The existing `queued_usage_chunk` guard already dropped trailing *events* after a usage merge, but it didn't cover the plain content-delta emit path when no merge happened.)
+
+Post-fix SSE order (verified over 5 consecutive minimax-m3 runs):
+```
+... content_block_stop(0) | message_delta | message_delta | message_delta(usage) | message_stop
+```
+No content delta after the stop; the final `message_delta` carries the real token counts (`input`/`output`/`cache_read`), so Claude Code's context-usage UI / auto-compact still work (the #5 concern). Also re-verified claude-glm-5.2 / deepseek-v4-pro / deepseek-v4-flash still emit valid sequences ending in `message_delta | message_stop` with no regression.
+
+**Survives an upgrade? No** — same as bug #2, this lives in litellm's own installed adapter files and is overwritten on reinstall. The two `.patch` files in `patches/` were regenerated to carry **both** the bug #2 fix *and* this bug #10 fix (round-trip verified: applying the regenerated patches to a pristine 1.89.3 produces byte-identical files to the live patched install). Re-run `patches/apply.sh` after any litellm bump, same as before.
+
 ## After any of these fixes
 
 Restart the proxy:
@@ -111,11 +141,11 @@ litellm --config config.yaml --host 127.0.0.1 --port 4000   # from this director
 ## Which of these survive a `litellm` upgrade, and which don't
 
 - **Bugs #1, #3, #4 are proxy-level fixes** (`litellm_hooks.py`'s `async_pre_call_hook`, registered via `config.yaml`'s `callbacks: - litellm_hooks.proxy_handler_instance`). They run before the request ever reaches litellm's internal Anthropic→OpenAI translation code, so they are independent of the installed litellm version and survive upgrades automatically — nothing to reapply.
-- **Bug #2 is the one exception.** Its fix lives inside litellm's own installed package files (`llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py` and `transformation.py`), so a `litellm` upgrade overwrites it every time.
+- **Bugs #2 and #10 are the exceptions.** Their fixes live inside litellm's own installed package files (`llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py` and `transformation.py`), so a `litellm` upgrade overwrites them every time.
 
-### Upgrading litellm without losing the bug #2 fix
+### Upgrading litellm without losing the bug #2 / #10 fixes
 
-`patches/` in this directory holds the bug #2 fix as portable unified diffs (`streaming_iterator.patch`, `transformation.patch`) plus `apply.sh`, which locates the active `uv tool install`'d litellm and applies them with `patch -p1` (safe to re-run — it detects already-applied patches and no-ops).
+`patches/` in this directory holds both fixes as portable unified diffs (`streaming_iterator.patch`, `transformation.patch`) plus `apply.sh`, which locates the active `uv tool install`'d litellm and applies them with `patch -p1` (safe to re-run — it detects already-applied patches and no-ops).
 
 ```bash
 uv tool install litellm==<new-version> --force --with 'litellm[proxy]'

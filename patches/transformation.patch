@@ -1,6 +1,38 @@
---- a/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py	2026-06-24 14:10:59
-+++ b/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py	2026-06-24 14:10:59
-@@ -1599,11 +1599,16 @@
+--- a/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py	2026-07-08 10:12:47
++++ b/litellm/llms/anthropic/experimental_pass_through/adapters/transformation.py	2026-07-08 10:12:47
+@@ -1593,17 +1593,67 @@
+         else:
+             return "text_delta", ContentTextBlockDelta(type="text_delta", text=text)
+ 
++    def _streaming_chunk_has_content(self, choices: List[Any]) -> bool:
++        """Return True if a streaming chunk carries any emittable content.
++
++        Used to distinguish a *pure usage trailer* (usage present, no content,
++        ``finish_reason=None``, non-empty ``choices``) from a real content
++        delta. Some OpenAI-compatible providers (e.g. minimax via opencode
++        zen) emit the usage trailer as a chunk with ``choices=[<empty delta>]``
++        rather than the empty-``choices`` shape OpenAI itself uses, so the
++        ``not response.choices`` base case below doesn't catch it and it would
++        otherwise be translated into a spurious empty ``content_block_delta``
++        after the stream has already ended.
++        """
++        for choice in choices:
++            delta = getattr(choice, "delta", None)
++            if delta is None:
++                continue
++            if getattr(delta, "content", None):
++                return True
++            if getattr(delta, "tool_calls", None):
++                return True
++            if getattr(delta, "reasoning_content", None):
++                return True
++            if getattr(delta, "thinking_blocks", None):
++                return True
++        return False
++
+     def translate_streaming_openai_response_to_anthropic(
+         self,
+         response: ModelResponse,
          current_content_block_index: int,
          applied_edits: Optional[List[AppliedEdit]] = None,
      ) -> Union[ContentBlockDelta, MessageBlockDelta]:
@@ -8,7 +40,26 @@
 -        if response.choices[0].finish_reason is not None:
 +        ## base case - final chunk w/ finish reason, or a usage-only trailer
 +        ## chunk (stream_options.include_usage) which carries no choices at all
-+        if not response.choices or response.choices[0].finish_reason is not None:
++        ## (OpenAI shape), OR a usage trailer whose ``choices`` list is
++        ## non-empty but every choice's delta is empty (minimax/opencode-zen
++        ## shape). The latter must also become a ``message_delta`` so it can
++        ## merge into a held stop_reason chunk instead of leaking as a
++        ## ``content_block_delta`` after the message has already ended.
++        has_usage = getattr(response, "usage", None) is not None or (
++            hasattr(response, "_hidden_params")
++            and "usage" in response._hidden_params
++        )
++        is_usage_only_trailer = (
++            bool(response.choices)
++            and response.choices[0].finish_reason is None
++            and has_usage
++            and not self._streaming_chunk_has_content(response.choices)
++        )
++        if (
++            not response.choices
++            or response.choices[0].finish_reason is not None
++            or is_usage_only_trailer
++        ):
              delta = MessageDelta(
 -                stop_reason=self._translate_openai_finish_reason_to_anthropic(
 -                    response.choices[0].finish_reason

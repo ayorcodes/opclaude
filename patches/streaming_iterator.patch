@@ -1,6 +1,22 @@
---- a/litellm/llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py	2026-06-24 14:10:59
-+++ b/litellm/llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py	2026-06-24 14:10:59
-@@ -343,7 +343,7 @@
+--- a/litellm/llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py	2026-07-08 10:12:47
++++ b/litellm/llms/anthropic/experimental_pass_through/adapters/streaming_iterator.py	2026-07-08 10:12:47
+@@ -52,6 +52,15 @@
+     holding_stop_reason_chunk: Optional[Any] = None
+     queued_usage_chunk: bool = False
+     current_content_block_index: int = 0
++    # Set True once a terminal ``message_delta`` carrying a real
++    # ``stop_reason`` has been emitted (or merged+emitted via the
++    # hold-and-merge path). After this point Anthropic SSE ordering forbids
++    # any further ``content_block_delta`` — but some providers (minimax via
++    # opencode zen) send a usage-only trailer chunk *after* the stop_reason
++    # chunk that, pre-fix, translated into a spurious empty
++    # ``content_block_delta`` and desynced the client ("Content block not
++    # found"). Guarding on this flag drops those stragglers.
++    sent_stop_reason: bool = False
+ 
+     def __init__(
+         self,
+@@ -343,7 +352,7 @@
                      self.holding_stop_reason_chunk is not None
                      and getattr(chunk, "usage", None) is not None
                  )
@@ -9,7 +25,70 @@
                  processed_chunk = LiteLLMAnthropicMessagesAdapter().translate_streaming_openai_response_to_anthropic(
                      response=chunk,
                      current_content_block_index=self.current_content_block_index,
-@@ -591,7 +591,7 @@
+@@ -359,6 +368,7 @@
+                     merged_chunk = self._merge_usage_into_held_stop_reason_chunk(chunk)
+                     self.chunk_queue.append(merged_chunk)
+                     self.queued_usage_chunk = True
++                    self.sent_stop_reason = True
+                     self.holding_stop_reason_chunk = None
+                     return self.chunk_queue.popleft()
+ 
+@@ -369,6 +379,13 @@
+                     # silently drop them — matches the async ``__anext__``
+                     # behavior where the block-handling logic is gated on
+                     # ``not self.queued_usage_chunk``.
++                    continue
++
++                # Defensive: once a terminal message_delta (real stop_reason)
++                # has been emitted, drop any straggler content_block_delta so
++                # it can't desync the client ("Content block not found").
++                # See the async ``__anext__`` path for the full rationale.
++                if self.sent_stop_reason and processed_chunk.get("type") == "content_block_delta":
+                     continue
+ 
+                 if should_start_new_block and not self.sent_content_block_finish:
+@@ -436,6 +453,8 @@
+                         processed_chunk = self._augment_message_delta_usage(
+                             processed_chunk
+                         )
++                        if processed_chunk.get("delta", {}).get("stop_reason") is not None:
++                            self.sent_stop_reason = True
+                     self.chunk_queue.append(processed_chunk)
+                     self.holding_chunk = None
+                     return self.chunk_queue.popleft()
+@@ -444,6 +463,8 @@
+                         processed_chunk = self._augment_message_delta_usage(
+                             processed_chunk
+                         )
++                        if processed_chunk.get("delta", {}).get("stop_reason") is not None:
++                            self.sent_stop_reason = True
+                     self.chunk_queue.append(processed_chunk)
+                     return self.chunk_queue.popleft()
+ 
+@@ -478,6 +499,7 @@
+                             self.holding_stop_reason_chunk
+                         )
+                     )
++                    self.sent_stop_reason = True
+                     self.holding_stop_reason_chunk = None
+             else:
+                 self.holding_chunk = None
+@@ -505,12 +527,14 @@
+                             self.holding_stop_reason_chunk
+                         )
+                     )
++                    self.sent_stop_reason = True
+                     self.holding_stop_reason_chunk = None
+                     return {
+                         "type": "content_block_stop",
+                         "index": self.current_content_block_index,
+                     }
+                 held = self._augment_message_delta_usage(self.holding_stop_reason_chunk)
++                self.sent_stop_reason = True
+                 self.holding_stop_reason_chunk = None
+                 return held
+             if self.sent_last_message is False:
+@@ -591,7 +615,7 @@
                      self.holding_stop_reason_chunk is not None
                      and getattr(chunk, "usage", None) is not None
                  )
@@ -18,7 +97,70 @@
                  processed_chunk = LiteLLMAnthropicMessagesAdapter().translate_streaming_openai_response_to_anthropic(
                      response=chunk,
                      current_content_block_index=self.current_content_block_index,
-@@ -814,6 +814,11 @@
+@@ -607,8 +631,21 @@
+                     merged_chunk = self._merge_usage_into_held_stop_reason_chunk(chunk)
+                     self.chunk_queue.append(merged_chunk)
+                     self.queued_usage_chunk = True
++                    self.sent_stop_reason = True
+                     self.holding_stop_reason_chunk = None
+                     return self.chunk_queue.popleft()
++
++                # Once a terminal message_delta (real stop_reason) has been
++                # emitted, Anthropic SSE ordering forbids any further
++                # content_block_delta. Some providers (minimax via opencode
++                # zen) send a usage-only trailer *after* the stop_reason
++                # chunk; with the transformation.py usage-only-trailer fix
++                # it now arrives here as a message_delta (and gets dropped by
++                # the queued_usage_chunk guard below), but defensively drop
++                # any straggler that still translates to a content delta so
++                # it can't desync the client ("Content block not found").
++                if self.sent_stop_reason and processed_chunk.get("type") == "content_block_delta":
++                    continue
+ 
+                 # Check if this processed chunk has a stop_reason - hold it for next chunk
+ 
+@@ -682,6 +719,8 @@
+                             processed_chunk = self._augment_message_delta_usage(
+                                 processed_chunk
+                             )
++                            if processed_chunk.get("delta", {}).get("stop_reason") is not None:
++                                self.sent_stop_reason = True
+                         self.chunk_queue.append(processed_chunk)
+                         self.holding_chunk = None
+                         return self.chunk_queue.popleft()
+@@ -690,6 +729,8 @@
+                             processed_chunk = self._augment_message_delta_usage(
+                                 processed_chunk
+                             )
++                            if processed_chunk.get("delta", {}).get("stop_reason") is not None:
++                                self.sent_stop_reason = True
+                         self.chunk_queue.append(processed_chunk)
+                         return self.chunk_queue.popleft()
+ 
+@@ -724,6 +765,7 @@
+                             self.holding_stop_reason_chunk
+                         )
+                     )
++                    self.sent_stop_reason = True
+                     self.holding_stop_reason_chunk = None
+             else:
+                 self.holding_chunk = None
+@@ -756,12 +798,14 @@
+                             self.holding_stop_reason_chunk
+                         )
+                     )
++                    self.sent_stop_reason = True
+                     self.holding_stop_reason_chunk = None
+                     return {
+                         "type": "content_block_stop",
+                         "index": self.current_content_block_index,
+                     }
+                 held = self._augment_message_delta_usage(self.holding_stop_reason_chunk)
++                self.sent_stop_reason = True
+                 self.holding_stop_reason_chunk = None
+                 return held
+             if not self.sent_last_message:
+@@ -814,6 +858,11 @@
          """
          from .transformation import LiteLLMAnthropicMessagesAdapter
  
