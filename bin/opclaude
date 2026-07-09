@@ -73,25 +73,77 @@ if [ "${1:-}" = "set-key" ]; then
     echo "opclaude is not set up yet. Run install.sh first." >&2
     exit 1
   fi
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
 
-  new_key="${2:-}"
-  if [ -z "$new_key" ]; then
-    read -r -s -p "Enter your new opencode API key (OPENCODE_API_KEY): " new_key
+  key_name="${2:-opencode}"
+
+  case "$key_name" in
+    meta)
+      var="META_API_KEY"
+      prompt="Enter your Meta AI API key (META_API_KEY): "
+      ;;
+    opencode|"")
+      var="OPENCODE_API_KEY"
+      prompt="Enter your new opencode API key (OPENCODE_API_KEY): "
+      ;;
+    *)
+      echo "Unknown key: $key_name. Use: opencode (default), meta" >&2
+      exit 1
+      ;;
+  esac
+
+  new_val="${3:-}"
+  if [ -z "$new_val" ]; then
+    read -r -s -p "$prompt" new_val
     echo
   fi
-  if [ -z "$new_key" ]; then
+  if [ -z "$new_val" ]; then
     echo "No key entered, nothing changed." >&2
     exit 1
   fi
 
-  umask 077
-  cat > "$ENV_FILE" <<EOF
-OPENCODE_API_KEY=$new_key
-LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY
-EOF
-  echo "Updated OPENCODE_API_KEY in $ENV_FILE."
+  python3 - "$ENV_FILE" "$var" "$new_val" <<'PY'
+import os, sys
+
+path = sys.argv[1]
+key = sys.argv[2]
+value = sys.argv[3]
+
+# Read existing env vars from file
+env = {}
+try:
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                env[k] = v
+except FileNotFoundError:
+    pass
+
+# Ensure LITELLM_MASTER_KEY exists (generate if missing)
+if "LITELLM_MASTER_KEY" not in env:
+    env["LITELLM_MASTER_KEY"] = "sk-" + os.urandom(32).hex()
+
+# Update the target key
+env[key] = value
+
+# Write back preserving existing keys
+lines = []
+for k in ("OPENCODE_API_KEY", "META_API_KEY", "LITELLM_MASTER_KEY", "GITHUB_API_KEY"):
+    v = env.get(k)
+    if v:
+        lines.append(f"{k}={v}")
+lines.append("")  # trailing newline
+
+umask = os.umask(0o077)
+try:
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+finally:
+    os.umask(umask)
+
+print(f"Updated {key} in {path}.")
+PY
 
   if command -v opclaude-proxy >/dev/null 2>&1; then
     opclaude-proxy restart

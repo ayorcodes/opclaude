@@ -102,6 +102,13 @@ if [ -z "${GITHUB_API_KEY:-}" ]; then
   echo
 fi
 
+# Meta AI (api.meta.ai) — optional
+if [ -z "${META_API_KEY:-}" ]; then
+  echo
+  read -r -s -p "Enter your Meta AI API key for muse-spark-1.1 (optional, press Enter to skip): " META_API_KEY
+  echo
+fi
+
 # Ollama (local models) — optional
 if command -v ollama >/dev/null 2>&1; then
   echo
@@ -118,6 +125,7 @@ fi
 umask 077
 cat > "$ENV_FILE" <<EOF
 OPENCODE_API_KEY=$OPENCODE_API_KEY
+META_API_KEY=$META_API_KEY
 LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY
 $([ -n "${GITHUB_API_KEY:-}" ] && echo "GITHUB_API_KEY=$GITHUB_API_KEY")
 EOF

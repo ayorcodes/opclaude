@@ -251,6 +251,19 @@ class ClampClaudeCodeRequest(CustomLogger):
                 if effort:
                     data["reasoning_effort"] = effort
 
+        # Meta AI API — maps Anthropic thinking to reasoning effort
+        if "meta" in model_lower:
+            thinking = data.pop("thinking", None)
+            data.pop("betas", None)
+            if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                budget = thinking.get("budget_tokens", 0)
+                effort = next(
+                    (lvl for threshold, lvl in _REASONING_EFFORT_TIERS if budget >= threshold),
+                    None,
+                )
+                if effort:
+                    data["reasoning"] = {"effort": effort}
+
         for key, context_limit in CONTEXT_LIMITS.items():
             if key in model_lower:
                 max_tokens = data.get("max_tokens")
