@@ -308,6 +308,34 @@ def _strip_think_blocks(text: str, in_think: bool = False, pending: str = ""):
         # loop for multiple think blocks in one chunk
 
 
+# OpenCode Go rejects requests without a stable per-conversation session id
+# (400 MissingSessionID). Claude Code sends x-claude-code-session-id; LiteLLM
+# does not forward client headers upstream, so copy it into x-opencode-session
+# for deployments served by opencode.ai.
+OPENCODE_HOSTS = ("opencode.ai",)
+CLIENT_SESSION_HEADER = "x-claude-code-session-id"
+
+
+def _is_opencode_model(model_name):
+    try:
+        from litellm.proxy.proxy_server import llm_router
+        deployments = llm_router.get_model_list(model_name=model_name) or []
+    except Exception:
+        return False
+    return any(
+        any(h in str((d.get("litellm_params") or {}).get("api_base") or "") for h in OPENCODE_HOSTS)
+        for d in deployments
+    )
+
+
+def _client_session_id(data):
+    headers = (data.get("proxy_server_request") or {}).get("headers") or {}
+    for k, v in headers.items():
+        if isinstance(k, str) and k.lower() == CLIENT_SESSION_HEADER and v:
+            return v
+    return data.get("litellm_session_id")
+
+
 class ClampClaudeCodeRequest(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         messages = data.get("messages")
@@ -323,6 +351,13 @@ class ClampClaudeCodeRequest(CustomLogger):
             data["model"] = model
 
         model_lower = model.lower()
+
+        if _is_opencode_model(model):
+            session_id = _client_session_id(data)
+            if session_id:
+                extra = dict(data.get("extra_headers") or {})
+                extra.setdefault("x-opencode-session", session_id)
+                data["extra_headers"] = extra
 
         if any(s in model_lower for s in INLINE_REFS_MODEL_SUBSTRINGS):
             tools = data.get("tools")
