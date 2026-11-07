@@ -54,10 +54,14 @@ def route_name(body: dict) -> str | None:
     try:
         content = body["messages"][0]["content"]
         if isinstance(content, list):
-            content = next(b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text")
+            content = next(
+                b["text"] for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+                and not b["text"].lstrip().startswith("<system-reminder>")
+            )
         if not isinstance(content, str):
             return None
-    except (KeyError, IndexError, TypeError, StopIteration):
+    except (KeyError, IndexError, TypeError, AttributeError, StopIteration):
         return None
     for line in content.splitlines()[:ROUTE_SCAN_LINES]:
         m = ROUTE_LINE.match(line)
