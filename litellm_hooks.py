@@ -1,4 +1,5 @@
 import os
+import re
 
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
@@ -192,6 +193,121 @@ def _inline_tool_schemas(tools):
                 _inline_refs(parameters)
 
 
+def _drop_untyped_properties(schema):
+    """Apple Foundation Models rejects the whole request (400 "data couldn't
+    be read") when any property schema lacks a `type` (e.g. Workflow's `args`).
+    Drop such properties, recursively."""
+    if isinstance(schema, list):
+        for item in schema:
+            _drop_untyped_properties(item)
+        return
+    if not isinstance(schema, dict):
+        return
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        for name in [
+            n for n, v in props.items()
+            if isinstance(v, dict) and not any(k in v for k in ("type", "anyOf", "oneOf", "allOf", "enum", "$ref"))
+        ]:
+            del props[name]
+            if isinstance(schema.get("required"), list) and name in schema["required"]:
+                schema["required"].remove(name)
+    for value in schema.values():
+        _drop_untyped_properties(value)
+
+
+def _sanitize_tools_for_apple(tools):
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        _drop_untyped_properties(tool.get("input_schema"))
+        function = tool.get("function")
+        if isinstance(function, dict):
+            _drop_untyped_properties(function.get("parameters"))
+
+
+# ---------------------------------------------------------------------------
+# Response-side: strip visible <think> blocks from text content
+# ---------------------------------------------------------------------------
+# Some OpenAI-compatible providers (minimax via opencode-zen, Meta AI) return
+# the model's reasoning/thinking as <think>...</think> in the regular
+# content field rather than as structured reasoning_content in the
+# streaming delta. litellm's OpenAI->Anthropic response converter passes this
+# through as a text_delta, so Claude Code renders the thinking as visible
+# text instead of hiding it inside a thinking content block.
+#
+# The async_post_call_streaming_iterator_hook below intercepts streaming
+# chunks in Anthropic SSE dict format and strips these markers from text
+# content before they reach the client.
+
+# Models whose reasoning output is embedded as <think> tags in text content.
+THINK_IN_TEXT_MODELS = ("minimax", "meta")
+
+
+_MAX_TAG_LEN = len("</think>")  # longest marker we look for
+
+
+def _strip_think_blocks(text: str, in_think: bool = False, pending: str = ""):
+    """Remove <think>...</think> blocks from text, handling chunk boundaries.
+
+    `pending` is leftover text from a previous call that ended with a prefix
+    which *might* be the start of a marker (e.g. "<th" at the end of a
+    chunk) — it is un-emitted text, not a confirmed tag, so it must be
+    re-examined once more text arrives rather than assumed to be one.
+
+    Returns (cleaned_text, still_in_think, new_pending). `new_pending` must
+    be passed back in on the next call (and, if the stream ends while it's
+    non-empty, flushed to the caller as literal text — it was never a real
+    tag).
+    """
+    text = pending + (text or "")
+    if not text:
+        return "", in_think, ""
+
+    if in_think:
+        idx = text.find("</think>")
+        if idx >= 0:
+            text = text[idx + 8:]
+            in_think = False
+        else:
+            # Keep only a possible partial "</think>" suffix as pending;
+            # everything else is consumed (it's inside the think block).
+            for tag_len in range(_MAX_TAG_LEN - 1, 0, -1):
+                if text[-tag_len:] == "</think>"[:tag_len]:
+                    return "", True, text[-tag_len:]
+            return "", True, ""
+
+    # Strip complete <think>...</think> blocks within this chunk
+    result_parts = []
+    while True:
+        start = text.find("<think>")
+        if start < 0:
+            # No opening tag — check for a partial one at the end (cross-chunk).
+            # Only held back as `pending`, never assumed to be a real tag.
+            for tag_len in range(len("<think>") - 1, 0, -1):
+                suffix = text[-tag_len:]
+                if "<think>"[:tag_len] == suffix:
+                    result_parts.append(text[:-tag_len])
+                    return "".join(result_parts), False, text[-tag_len:]
+            result_parts.append(text)
+            return "".join(result_parts), False, ""
+
+        result_parts.append(text[:start])
+        text_after_open = text[start + 7:]
+
+        close = text_after_open.find("</think>")
+        if close < 0:
+            # No closing tag yet — check for a partial "</think>" suffix to
+            # hold as pending; the rest is consumed (inside the think block).
+            for tag_len in range(_MAX_TAG_LEN - 1, 0, -1):
+                if text_after_open[-tag_len:] == "</think>"[:tag_len]:
+                    return "".join(result_parts), True, text_after_open[-tag_len:]
+            return "".join(result_parts), True, ""
+
+        text = text_after_open[close + 8:]
+        # loop for multiple think blocks in one chunk
+
+
 class ClampClaudeCodeRequest(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         messages = data.get("messages")
@@ -212,6 +328,11 @@ class ClampClaudeCodeRequest(CustomLogger):
             tools = data.get("tools")
             if isinstance(tools, list):
                 _inline_tool_schemas(tools)
+
+        if model_lower.startswith("claude-apple-"):
+            tools = data.get("tools")
+            if isinstance(tools, list):
+                _sanitize_tools_for_apple(tools)
 
         if "qwen" in model_lower:
             max_tokens = data.get("max_tokens")
@@ -285,6 +406,86 @@ class ClampClaudeCodeRequest(CustomLogger):
                 break
 
         return data
+
+    async def async_post_call_streaming_iterator_hook(
+        self,
+        user_api_key_dict,
+        response,
+        request_data,
+    ):
+        """Intercept streaming chunks and strip visible <think> blocks."""
+        model = (request_data or {}).get("model", "")
+        needs_cleanup = any(s in model.lower() for s in THINK_IN_TEXT_MODELS)
+
+        if not needs_cleanup:
+            async for item in response:
+                yield item
+            return
+
+        in_think = False
+        pending = ""
+        async for chunk in response:
+            if isinstance(chunk, dict) and chunk.get("type") == "content_block_delta":
+                delta = chunk.get("delta")
+                if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                    raw_text = delta.get("text", "")
+                    if isinstance(raw_text, str) and raw_text:
+                        cleaned, in_think, pending = _strip_think_blocks(
+                            raw_text, in_think, pending
+                        )
+                        if cleaned:
+                            delta["text"] = cleaned
+                            yield chunk
+                        continue
+            elif isinstance(chunk, dict) and chunk.get("type") == "message_start":
+                in_think = False
+                pending = ""
+
+            yield chunk
+
+        if pending:
+            # Held-back suffix never turned out to be a real tag (stream
+            # ended before it could be confirmed either way) — it's
+            # genuine text, so don't drop it silently.
+            yield {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": pending},
+            }
+
+    async def async_post_call_success_hook(
+        self,
+        data: dict,
+        user_api_key_dict,
+        response,
+    ) -> None:
+        """Strip visible <think> blocks from non-streaming responses."""
+        model = (data or {}).get("model", "")
+        if not any(s in model.lower() for s in THINK_IN_TEXT_MODELS):
+            return
+
+        if not isinstance(response, dict):
+            return
+
+        content = response.get("content")
+        if not isinstance(content, list):
+            return
+
+        modified = False
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                cleaned, _, pending = _strip_think_blocks(block["text"])
+                cleaned += pending  # non-streaming: nothing left dangling, flush as text
+                if cleaned != block["text"]:
+                    block["text"] = cleaned
+                    modified = True
+
+        if modified:
+            # Rough estimate for usage output_tokens: removed chars / 4.
+            # Not critical — the client recalculates if needed.
+            pass
 
 
 proxy_handler_instance = ClampClaudeCodeRequest()

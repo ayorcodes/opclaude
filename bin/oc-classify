@@ -89,6 +89,7 @@ def llm_classify(task, model, state_dir):
             },
         ],
         "max_tokens": 150,
+        "stream": True,  # the Apple Foundation Models server only streams
     }
     req = urllib.request.Request(
         "http://127.0.0.1:4000/v1/chat/completions",
@@ -101,8 +102,14 @@ def llm_classify(task, model, state_dir):
     )
     try:
         with urllib.request.urlopen(req, timeout=25) as resp:
-            body = json.loads(resp.read().decode())
-        text = body["choices"][0]["message"]["content"].strip().upper()
+            text = ""
+            for raw in resp:
+                line = raw.decode().strip()
+                if not line.startswith("data:") or line.endswith("[DONE]"):
+                    continue
+                for ch in json.loads(line[5:]).get("choices", []):
+                    text += (ch.get("delta") or {}).get("content") or ""
+        text = text.strip().upper()
         for candidate in ("TRIVIAL", "MODERATE", "CRITICAL"):
             if candidate in text:
                 return candidate.lower()

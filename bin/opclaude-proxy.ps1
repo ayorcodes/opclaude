@@ -48,6 +48,13 @@ function Start-Proxy {
         return
     }
     Remove-Item $PID_FILE -ErrorAction SilentlyContinue
+
+    # Build config.generated.yaml from ~/.opclaude/models.yaml using litellm's
+    # own interpreter (it has PyYAML).
+    $py = Join-Path (& uv tool dir).Trim() "litellm\Scripts\python.exe"
+    & $py "$REPO_DIR\opclaude_models.py" build
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+
     Write-Host "Starting opclaude proxy on http://${HOST_ADDR}:${PORT} ..."
 
     # Set PYTHONUTF8=1 so litellm's Unicode banner doesn't crash on Windows
@@ -55,7 +62,7 @@ function Start-Proxy {
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
     $proc = Start-Process -FilePath "litellm" `
-        -ArgumentList "--config `"$REPO_DIR\config.yaml`" --host $HOST_ADDR --port $PORT" `
+        -ArgumentList "--config `"$REPO_DIR\config.generated.yaml`" --host $HOST_ADDR --port $PORT" `
         -WorkingDirectory $REPO_DIR `
         -NoNewWindow `
         -RedirectStandardOutput $LOG_FILE `

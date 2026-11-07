@@ -2,7 +2,10 @@
 # Manages the local litellm proxy that routes Claude Code through opencode
 # Zen models. See ../README.md and ../FIX.md.
 #
-# Usage: opclaude-proxy start|stop|restart|status|ensure
+# Also manages the relay on :4001 (opclaude_relay.py) that sits in front of
+# plain `claude` once `opclaude relay enable` is on.
+#
+# Usage: opclaude-proxy start|stop|restart|status|ensure|build
 set -uo pipefail
 
 # Resolve the real repo root even when this script is symlinked onto PATH.
@@ -20,6 +23,25 @@ PID_FILE="$STATE_DIR/proxy.pid"
 LOG_FILE="$STATE_DIR/proxy.log"
 PORT=4000
 HOST=127.0.0.1
+MODELS_FILE="${OPCLAUDE_MODELS:-$HOME/.opclaude/models.yaml}"
+RELAY_PORT=4001
+RELAY_PID_FILE="$STATE_DIR/relay.pid"
+RELAY_OUT="$STATE_DIR/relay.out"
+GENERATED_CONFIG="$REPO_DIR/config.generated.yaml"
+
+# Run opclaude_models.py under litellm's own interpreter (it has PyYAML).
+models_py() {
+  local py
+  py="$(head -n 1 "$(command -v litellm)" 2>/dev/null | sed -n 's/^#!//p')"
+  [ -x "$py" ] || py=python3
+  "$py" "$REPO_DIR/opclaude_models.py" "$@"
+}
+
+# True when models.yaml or config.yaml changed since the last build.
+config_stale() {
+  [ ! -f "$GENERATED_CONFIG" ] || [ ! -f "$MODELS_FILE" ] ||
+    [ "$MODELS_FILE" -nt "$GENERATED_CONFIG" ] || [ "$REPO_DIR/config.yaml" -nt "$GENERATED_CONFIG" ]
+}
 
 mkdir -p "$STATE_DIR"
 
@@ -45,16 +67,74 @@ is_running() {
   return 1
 }
 
+relay_running() {
+  [ -f "$RELAY_PID_FILE" ] && kill -0 "$(cat "$RELAY_PID_FILE" 2>/dev/null)" 2>/dev/null &&
+    curl -fsS -o /dev/null --max-time 2 "http://$HOST:$RELAY_PORT/_relay/health" 2>/dev/null
+}
+
+relay_start() {
+  if relay_running; then
+    echo "opclaude relay already running (pid $(cat "$RELAY_PID_FILE"))."
+    return 0
+  fi
+  rm -f "$RELAY_PID_FILE"
+  echo "Starting opclaude relay on http://$HOST:$RELAY_PORT ..."
+  nohup python3 "$REPO_DIR/opclaude_relay.py" >> "$RELAY_OUT" 2>&1 &
+  echo $! > "$RELAY_PID_FILE"
+  local waited=0
+  while [ "$waited" -lt 10 ]; do
+    if relay_running; then
+      echo "opclaude relay is up (pid $(cat "$RELAY_PID_FILE"))."
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "opclaude relay did not come up within 10s. Last 30 lines of $RELAY_OUT:" >&2
+  tail -n 30 "$RELAY_OUT" >&2
+  return 1
+}
+
+relay_stop() {
+  local pid
+  pid="$(cat "$RELAY_PID_FILE" 2>/dev/null)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid"
+    echo "Stopped opclaude relay (pid $pid)."
+  else
+    echo "opclaude relay is not running."
+  fi
+  rm -f "$RELAY_PID_FILE"
+}
+
+relay_status() {
+  if relay_running; then
+    echo "opclaude relay is running (pid $(cat "$RELAY_PID_FILE")) on http://$HOST:$RELAY_PORT"
+  else
+    echo "opclaude relay is not running."
+  fi
+}
+
+# The relay starts first but its failure never blocks LiteLLM; it only sets
+# the exit status so start/restart report it.
 start() {
+  local relay_rc=0
+  relay_start || relay_rc=$?
+  litellm_start || return 1
+  return "$relay_rc"
+}
+
+litellm_start() {
   if is_running; then
     echo "opclaude proxy already running (pid $(cat "$PID_FILE"))."
     return 0
   fi
   rm -f "$PID_FILE"
+  models_py build || return 1
   echo "Starting opclaude proxy on http://$HOST:$PORT ..."
   (
     cd "$REPO_DIR" || exit 1
-    nohup litellm --config config.yaml --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
+    nohup litellm --config "$GENERATED_CONFIG" --host "$HOST" --port "$PORT" >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
   )
 
@@ -74,6 +154,7 @@ start() {
 }
 
 stop() {
+  relay_stop
   if [ -f "$PID_FILE" ]; then
     local pid
     pid="$(cat "$PID_FILE" 2>/dev/null)"
@@ -88,6 +169,7 @@ stop() {
 }
 
 status() {
+  relay_status
   if is_running; then
     echo "opclaude proxy is running (pid $(cat "$PID_FILE")) on http://$HOST:$PORT"
   else
@@ -100,9 +182,17 @@ case "${1:-}" in
   stop) stop ;;
   restart) stop; sleep 1; start ;;
   status) status ;;
-  ensure) is_running || start ;;
+  ensure)
+    if ! is_running || ! relay_running; then
+      start || is_running
+    elif config_stale; then
+      echo "models changed, reloading opclaude proxy ..."
+      stop; sleep 1; start
+    fi
+    ;;
+  build) models_py build ;;
   *)
-    echo "Usage: opclaude-proxy start|stop|restart|status|ensure" >&2
+    echo "Usage: opclaude-proxy start|stop|restart|status|ensure|build" >&2
     exit 1
     ;;
 esac

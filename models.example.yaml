@@ -1,0 +1,86 @@
+# opclaude models — copied to ~/.opclaude/models.yaml on first run.
+# Edit that copy (`opclaude models edit`); the proxy picks up changes
+# automatically on the next `opclaude` launch.
+#
+# Each model's proxy name is  claude-<prefix>-<short>[<context>]
+#   short   = last path segment of the model id, with ":cloud"/"-cloud"
+#             dropped and ":" turned into "-"  (override with `name:`)
+#   context = only when `context:` is set, e.g. 256K / 1M
+#
+# Per-model options (all optional):
+#   name: <short>         override the derived short name
+#   context: 256K | 1M    context window (also appended to the name)
+#   reasoning: true|false sets model_info.supports_reasoning
+#   chat_completions: false   don't force /chat/completions (openai and
+#                             github_copilot types default to true)
+#   params: {...}         extra litellm_params, passed through verbatim
+#   enabled: false        keep the entry but don't serve it
+
+default: claude-ol-glm-5.2[1000K]
+
+providers:
+  opencode:
+    prefix: ""                           # claude-<model>, no provider tag
+    api_base: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_API_KEY
+    models:
+      deepseek-v4-pro:
+      deepseek-v4-flash:
+      glm-5.2: { reasoning: false }
+      minimax-m3: { chat_completions: false }
+      kimi-k2.7-code: { name: kimi-2.7, enabled: false }
+      qwen3.7-plus: { name: qwen-3.7-plus, enabled: false }
+
+  openrouter:
+    prefix: or
+    type: openrouter
+    api_key_env: OPENROUTER_API_KEY
+    models:
+      deepseek/deepseek-v4-pro-0813:
+      deepseek/deepseek-v4.1-flash:
+      z-ai/glm-5.2: { reasoning: false }
+      z-ai/glm-5.3: { reasoning: true }
+      z-ai/glm-5.3-flash: { reasoning: false }
+      minimax/minimax-m3:
+      minimax/minimax-m3:free: { reasoning: false }
+
+  ollama:
+    prefix: ol
+    api_base: http://localhost:11434/v1
+    api_key: ollama
+    drop_params: false
+    models:                              # ids must match `ollama list`
+      deepseek-v4-flash:cloud: { context: 1M }
+      deepseek-v4-pro:cloud: { context: 512K }
+      minimax-m3:cloud: { context: 512K }
+      glm-5.2:cloud: { context: 1M }
+      kimi-k2.7-code:cloud: { context: 256K }
+      kimi-k3:cloud: { context: 1M }
+      gemma4:31b-cloud: { context: 256K }
+      deepseek-r1:14b: { context: 32K }
+      qwen3:8b: { context: 32K }
+
+  copilot:                               # device-code login on first request
+    prefix: copilot
+    type: github_copilot
+    models:
+      gpt-5.2:
+      gpt-5.3-codex:
+      gpt-5.3-codex-medium:
+      gpt-5.1-codex-max:
+      gpt-4.1:
+
+  meta:
+    prefix: meta
+    api_base: https://api.meta.ai/v1
+    api_key_env: META_API_KEY
+    models:
+      muse-spark-1.1: { reasoning: true }
+
+  github:                                # GitHub Models, PAT with models:read
+    prefix: gh
+    type: github
+    api_key_env: GITHUB_API_KEY
+    models:
+      gpt-4o: { enabled: false }
+      gpt-4.1: { enabled: false }

@@ -5,3 +5,5 @@ __pycache__/
 *.patch.rej
 .vscode/
 MEMORY.md
+config.generated.yaml
+config.generated.yaml.tmp
