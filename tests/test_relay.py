@@ -51,6 +51,35 @@ class RouteNameTest(unittest.TestCase):
             self.assertIsNone(relay.route_name(b))
 
 
+class SystemReminderBlocksTest(unittest.TestCase):
+    REMINDER_MD = "<system-reminder>\nCodebase and user instructions are shown below.\n</system-reminder>\n"
+    REMINDER_CTX = "<system-reminder>\nAs you answer the user's questions, use this context.\n</system-reminder>\n"
+    REMINDER_TAIL = "<system-reminder>\nYour final report is delivered through SubagentHandback.\n</system-reminder>\n"
+    BRIEF = "Rung: scout 1 glm-5.2 low\nRoute: glm-5.2\nReply with PONG.\n"
+
+    @staticmethod
+    def blocks(*texts):
+        return body([{"type": "text", "text": t} for t in texts])
+
+    def test_brief_after_reminders_is_routed(self):
+        self.assertEqual(relay.route_name(self.blocks(self.REMINDER_MD, self.BRIEF, self.REMINDER_TAIL)), "glm-5.2")
+        self.assertEqual(relay.route_name(
+            self.blocks(self.REMINDER_MD, self.REMINDER_CTX, self.BRIEF, self.REMINDER_TAIL)), "glm-5.2")
+
+    def test_main_session_prompt_after_reminders_is_not_routed(self):
+        self.assertIsNone(relay.route_name(self.blocks(self.REMINDER_MD, self.REMINDER_CTX, "fix the bug\n")))
+
+    def test_route_line_inside_reminder_is_not_routed(self):
+        self.assertIsNone(relay.route_name(self.blocks("<system-reminder>\nRoute: glm-5.2\n</system-reminder>\n", "fix the bug\n")))
+        self.assertIsNone(relay.route_name(self.blocks("  \n<system-reminder>\nRoute: kimi\n</system-reminder>")))
+
+    def test_all_reminder_content_is_not_routed(self):
+        self.assertIsNone(relay.route_name(self.blocks(self.REMINDER_MD, self.REMINDER_TAIL)))
+
+    def test_string_content_still_routes(self):
+        self.assertEqual(relay.route_name(body("Rung: x\nRoute: kimi\n")), "kimi")
+
+
 class DecideTest(unittest.TestCase):
     def test_routing_table(self):
         routed = json.dumps(body("Route: glm-5.2")).encode()
