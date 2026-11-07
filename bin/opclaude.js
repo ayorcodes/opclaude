@@ -36,20 +36,13 @@ const [,, cmd, ...rest] = process.argv;
 
 // --- models ---------------------------------------------------------------
 if (cmd === "models") {
-  const lines = fs.readFileSync(path.join(REPO_DIR, "config.yaml"), "utf8").split(/\r?\n/);
-  let name = "", target = "";
-  for (const line of lines) {
-    let m;
-    if ((m = line.match(/^\s*-\s*model_name:\s*(.+)$/))) {
-      if (name) console.log(`  ${name.padEnd(24)} -> ${target || "?"}`);
-      name = m[1].trim(); target = "";
-    } else if (!target && (m = line.match(/^\s*model:\s*openai\/(.+)$/))) {
-      target = m[1].trim();
-    }
-  }
-  if (name) console.log(`  ${name.padEnd(24)} -> ${target || "?"}`);
-  console.log("\nRun with: opclaude --model <name>   (default: claude-deepseek-v4-pro)");
-  process.exit(0);
+  const toolDir = execFileSync("uv", ["tool", "dir"], { encoding: "utf8" }).trim();
+  const py = process.platform === "win32"
+    ? path.join(toolDir, "litellm", "Scripts", "python.exe")
+    : path.join(toolDir, "litellm", "bin", "python");
+  const sub = rest[0] === "add" ? rest : ["list", ...rest];
+  const r = spawnSync(py, [path.join(REPO_DIR, "opclaude_models.py"), ...sub], { stdio: "inherit" });
+  process.exit(r.status ?? 1);
 }
 
 // --- set-key --------------------------------------------------------------

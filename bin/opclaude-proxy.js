@@ -3,7 +3,7 @@
 // Usage: node opclaude-proxy.js start|stop|restart|status|ensure
 "use strict";
 
-const { spawn } = require("child_process");
+const { spawn, execFileSync, spawnSync } = require("child_process");
 const http  = require("http");
 const fs    = require("fs");
 const path  = require("path");
@@ -60,11 +60,21 @@ async function start() {
     return;
   }
   fs.rmSync(PID_FILE, { force: true });
+
+  // Build config.generated.yaml from ~/.opclaude/models.yaml using litellm's
+  // own interpreter (it has PyYAML).
+  const toolDir = execFileSync("uv", ["tool", "dir"], { encoding: "utf8" }).trim();
+  const py = process.platform === "win32"
+    ? path.join(toolDir, "litellm", "Scripts", "python.exe")
+    : path.join(toolDir, "litellm", "bin", "python");
+  const built = spawnSync(py, [path.join(REPO_DIR, "opclaude_models.py"), "build"], { stdio: "inherit" });
+  if (built.status !== 0) process.exit(1);
+
   console.log(`Starting opclaude proxy on http://${HOST}:${PORT} ...`);
 
   const logFd = fs.openSync(LOG_FILE, "a");
   const proc  = spawn("litellm", [
-    "--config", path.join(REPO_DIR, "config.yaml"),
+    "--config", path.join(REPO_DIR, "config.generated.yaml"),
     "--host", HOST,
     "--port", String(PORT),
   ], {

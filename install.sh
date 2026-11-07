@@ -112,10 +112,10 @@ fi
 # Ollama (local models) — optional
 if command -v ollama >/dev/null 2>&1; then
   echo
-  echo "Ollama detected. Ollama models (claude-ol-*) in config.yaml route here."
-  echo "  ollama list           — see installed models"
-  echo "  opclaude models ol    — see configured Ollama model names"
-  echo "  Edit config.yaml model: fields to match your 'ollama list' output."
+  echo "Ollama detected. Ollama models (claude-ol-*) in ~/.opclaude/models.yaml route here."
+  echo "  ollama list              — see installed models"
+  echo "  opclaude models ollama   — see configured Ollama model names"
+  echo "  opclaude models edit     — make the ids match your 'ollama list' output"
 else
   echo
   echo "Ollama not found. Ollama models (claude-ol-*) will be skipped unless you install Ollama"
@@ -128,6 +128,7 @@ OPENCODE_API_KEY=$OPENCODE_API_KEY
 META_API_KEY=$META_API_KEY
 LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY
 $([ -n "${GITHUB_API_KEY:-}" ] && echo "GITHUB_API_KEY=$GITHUB_API_KEY")
+$([ -n "${OPENROUTER_API_KEY:-}" ] && echo "OPENROUTER_API_KEY=$OPENROUTER_API_KEY")
 EOF
 echo "Saved secrets to $ENV_FILE (mode 600)."
 

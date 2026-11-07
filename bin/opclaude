@@ -18,54 +18,52 @@ REPO_DIR="$(cd "$(dirname "$REAL_SCRIPT")/.." && pwd)"
 STATE_DIR="$HOME/.config/opclaude"
 ENV_FILE="$STATE_DIR/.env"
 
+# Run opclaude_models.py under litellm's own interpreter (it has PyYAML).
+models_py() {
+  local py
+  py="$(head -n 1 "$(command -v litellm)" 2>/dev/null | sed -n 's/^#!//p')"
+  [ -x "$py" ] || py=python3
+  "$py" "$REPO_DIR/opclaude_models.py" "$@"
+}
+
+reload_proxy_if_running() {
+  if command -v opclaude-proxy >/dev/null 2>&1 && opclaude-proxy status | grep -q "opclaude proxy is running"; then
+    opclaude-proxy restart
+  fi
+}
+
 if [ "${1:-}" = "models" ]; then
-  filter="${2:-oc}"   # default: opencode only; 'ol' = Ollama only; 'all' = both
-  awk -v filter="$filter" '
-    /^[[:space:]]*- model_name:/ {
-      if (name != "") {
-        group = (name ~ /^claude-ol-/) ? "ol" : "oc"
-        groups[group] = groups[group] sprintf("  %-34s -> %s\n", name, (target == "" ? "?" : target))
-      }
-      sub(/^[[:space:]]*- model_name:[[:space:]]*/, "")
-      name = $0
-      target = ""
-      next
-    }
-    /^[[:space:]]*model:[[:space:]]*(openai|github|ollama)\// {
-      if (target == "") {
-        t = $0
-        sub(/^[[:space:]]*model:[[:space:]]*(openai|github|ollama)\//, "", t)
-        target = t
-      }
-    }
-    END {
-      if (name != "") {
-        group = (name ~ /^claude-ol-/) ? "ol" : "oc"
-        groups[group] = groups[group] sprintf("  %-34s -> %s\n", name, (target == "" ? "?" : target))
-      }
-      if (filter == "oc" || filter == "all") {
-        print "opencode models  (claude-oc-* / claude-*):"
-        printf "%s", groups["oc"]
-      }
-      if (filter == "all") print ""
-      if (filter == "ol" || filter == "all") {
-        print "Ollama models  (claude-ol-*):"
-        if (groups["ol"] == "") {
-          print "  (none configured)"
-        } else {
-          printf "%s", groups["ol"]
-        }
-      }
-    }
-  ' "$REPO_DIR/config.yaml"
-  echo
-  echo "Filter:  opclaude models       — opencode only (default)"
-  echo "         opclaude models ol    — Ollama only"
-  echo "         opclaude models all   — both"
-  echo
-  echo "Run with:  opclaude --model <name>           (e.g. claude-deepseek-v4-pro)"
-  echo "           opclaude --model claude-ol-<name> (Ollama-routed)"
-  exit 0
+  case "${2:-}" in
+    add)
+      shift 2
+      models_py add "$@" && reload_proxy_if_running
+      exit $?
+      ;;
+    edit)
+      file="$(models_py path)" || exit 1
+      before="$(cksum < "$file")"
+      ${VISUAL:-${EDITOR:-vi}} "$file"
+      if [ "$(cksum < "$file")" != "$before" ]; then
+        models_py build >/dev/null && reload_proxy_if_running
+      fi
+      exit $?
+      ;;
+    path)
+      models_py path
+      exit $?
+      ;;
+    -h|--help|help)
+      echo "opclaude models [provider]                    list models, grouped by provider"
+      echo "opclaude models add <provider> <id> [k=v ...]  e.g. add openrouter qwen/qwen3.7-coder context=256K"
+      echo "opclaude models edit                          open models.yaml in \$EDITOR"
+      echo "opclaude models path                          print models.yaml location"
+      exit 0
+      ;;
+    *)
+      models_py list ${2:+"$2"}
+      exit $?
+      ;;
+  esac
 fi
 
 if [ "${1:-}" = "set-key" ]; then
@@ -85,8 +83,16 @@ if [ "${1:-}" = "set-key" ]; then
       var="OPENCODE_API_KEY"
       prompt="Enter your new opencode API key (OPENCODE_API_KEY): "
       ;;
+    openrouter)
+      var="OPENROUTER_API_KEY"
+      prompt="Enter your OpenRouter API key (OPENROUTER_API_KEY): "
+      ;;
+    github)
+      var="GITHUB_API_KEY"
+      prompt="Enter your GitHub Models API key (GITHUB_API_KEY): "
+      ;;
     *)
-      echo "Unknown key: $key_name. Use: opencode (default), meta" >&2
+      echo "Unknown key: $key_name. Use: opencode (default), meta, openrouter, github" >&2
       exit 1
       ;;
   esac
@@ -129,7 +135,7 @@ env[key] = value
 
 # Write back preserving existing keys
 lines = []
-for k in ("OPENCODE_API_KEY", "META_API_KEY", "LITELLM_MASTER_KEY", "GITHUB_API_KEY"):
+for k in ("OPENCODE_API_KEY", "META_API_KEY", "LITELLM_MASTER_KEY", "GITHUB_API_KEY", "OPENROUTER_API_KEY"):
     v = env.get(k)
     if v:
         lines.append(f"{k}={v}")
@@ -222,6 +228,68 @@ PY
   exit 0
 fi
 
+if [ "${1:-}" = "relay" ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to safely edit ~/.zshrc. Install python3 and re-run." >&2
+    exit 1
+  fi
+  ZSHRC="$HOME/.zshrc"
+  case "${2:-}" in
+    enable|disable)
+      if ! python3 - "$ZSHRC" "$2" <<'PY'
+import re, shutil, sys
+from pathlib import Path
+path, action = Path(sys.argv[1]), sys.argv[2]
+start, end = "# >>> opclaude relay >>>", "# <<< opclaude relay <<<"
+block = start + """
+claude() {
+  if [ -z "${ANTHROPIC_BASE_URL:-}" ] && curl -fsS -o /dev/null --max-time 0.3 http://127.0.0.1:4001/_relay/health 2>/dev/null; then
+    ANTHROPIC_BASE_URL=http://127.0.0.1:4001 command claude "$@"
+  else
+    command claude "$@"
+  fi
+}
+""" + end
+text = path.read_text() if path.exists() else ""
+pattern = re.compile(re.escape(start) + r".*?" + re.escape(end) + r"\n?", re.S)
+if action == "enable":
+    if path.exists():
+        shutil.copy2(path, str(path) + ".opclaude.bak")
+    if pattern.search(text):
+        text = pattern.sub(lambda _: block + "\n", text)
+    else:
+        text += ("" if text.endswith("\n") or not text else "\n") + block + "\n"
+else:
+    text = pattern.sub("", text)
+path.write_text(text)
+PY
+      then
+        exit 1
+      fi
+      if [ "$2" = enable ]; then
+        echo "Added the opclaude relay block to $ZSHRC (backup: $ZSHRC.opclaude.bak)."
+      else
+        echo "Removed the opclaude relay block from $ZSHRC."
+      fi
+      echo "Open a new shell or \`source ~/.zshrc\`."
+      exit 0
+      ;;
+    status)
+      if grep -qF "# >>> opclaude relay >>>" "$ZSHRC" 2>/dev/null; then
+        echo "relay block present in $ZSHRC"
+      else
+        echo "relay block absent from $ZSHRC"
+      fi
+      opclaude-proxy status
+      exit $?
+      ;;
+    *)
+      echo "Usage: opclaude relay enable|disable|status" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 if ! command -v claude >/dev/null 2>&1; then
   echo "Claude Code CLI ('claude') not found on PATH. Run install.sh again, or install it yourself:" >&2
   echo "  npm install -g @anthropic-ai/claude-code" >&2
@@ -246,8 +314,8 @@ opclaude-proxy ensure || exit 1
 
 # Claude Code defaults to its own model names (e.g. claude-sonnet-4-6), which
 # don't exist on this proxy and produce a confusing 400 error. Default to the
-# cheapest/fastest opencode model unless the user passes their own --model.
-DEFAULT_MODEL="claude-deepseek-v4-pro"
+# `default:` from models.yaml unless the user passes their own --model.
+DEFAULT_MODEL="$(models_py default)" || exit 1
 has_model_flag=0
 for arg in "$@"; do
   case "$arg" in
